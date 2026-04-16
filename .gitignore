@@ -5,6 +5,8 @@ bin/
 # Test
 coverage.out
 coverage.html
+*_cov.out
+*.cov
 
 # IDE
 .idea/
