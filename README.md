@@ -58,6 +58,8 @@ labels.dev=jane                                    # nested field access
 lower(name)=john*                                  # function call as field transform
 len(name)>5                                        # function in comparison
 contains(tags, category)                           # function as boolean predicate
+orders@first                                       # selector: list is non-empty
+orders@(status=shipped)                            # selector: any element satisfies
 ```
 
 ## Compile and Evaluate
@@ -215,6 +217,33 @@ ast.Depth(expr)       // int — max nesting depth
 ast.Walk(expr, fn)    // depth-first traversal
 ast.String(expr)      // round-trip back to query string
 ```
+
+## Selectors (list fields)
+
+Selectors apply a predicate to a list-valued field. Three forms are supported:
+
+```
+items@first            # list exists and has ≥ 1 element
+items@last             # list exists and has ≥ 1 element (distinct for codegen)
+orders@(status=shipped)  # EXISTS: at least one element satisfies the inner
+```
+
+Element shapes inside `@(...)`:
+
+- `map[string]any` — inner fields resolve by key: `orders@(status=shipped)` reads `"status"` on each map.
+- Struct with `query:"..."` tags — inner fields resolve by tag, same contract as `StructAccessor`.
+- Any other type (primitives, untyped slices) — inner field lookups return `(nil, false)` and do not match.
+
+Validation of list fields only requires the field to be declared. `OpPresence` is not required for a field used as a selector base.
+
+Composition works as expected:
+
+```
+(orders@(status=shipped) OR orders@(status=delivered)) AND total>500
+NOT line_items@(price>100)
+```
+
+Codegen via `Visitor[T]` is the consumer's responsibility — the library does not translate selectors into SQL `EXISTS` or JSON path queries. See `ast.VisitSelector` to plug in your target.
 
 ## Operators
 

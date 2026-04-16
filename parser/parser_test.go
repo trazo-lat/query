@@ -81,6 +81,11 @@ func TestParse_RoundTrip(t *testing.T) {
 		"(state=draft OR state=issued) AND total>50000",
 		"(labels.dev=jane OR labels.env=bar) AND NOT cluster=demo",
 		"created_at:2026-01-01..2026-03-31",
+		"items@first",
+		"items@last",
+		"items@(name=foo)",
+		"orders@(status=shipped) AND total>500",
+		"NOT items@(name=foo)",
 	}
 	for _, q := range examples {
 		t.Run(q, func(t *testing.T) {
@@ -88,6 +93,76 @@ func TestParse_RoundTrip(t *testing.T) {
 			got := ast.String(expr)
 			if got != q {
 				t.Errorf("round-trip:\n  got:  %q\n  want: %q", got, q)
+			}
+		})
+	}
+}
+
+func TestParse_Selector(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		baseName string
+		selector string
+		hasInner bool
+	}{
+		{"first", "items@first", "items", "first", false},
+		{"last", "items@last", "items", "last", false},
+		{"inner equality", "items@(name=foo)", "items", "", true},
+		{"inner numeric", "line_items@(price>100)", "line_items", "", true},
+		{"inner nested field", "orders@(labels.env=prod)", "orders", "", true},
+		{"inner with AND", "orders@(status=shipped AND qty>0)", "orders", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr := mustParse(t, tt.input)
+			s, ok := expr.(*ast.SelectorExpr)
+			if !ok {
+				t.Fatalf("expected *SelectorExpr, got %T", expr)
+			}
+			base, ok := s.Base.(*ast.PresenceExpr)
+			if !ok {
+				t.Fatalf("expected PresenceExpr base, got %T", s.Base)
+			}
+			if base.Field.String() != tt.baseName {
+				t.Errorf("base field: got %q, want %q", base.Field.String(), tt.baseName)
+			}
+			if s.Selector != tt.selector {
+				t.Errorf("selector: got %q, want %q", s.Selector, tt.selector)
+			}
+			if (s.Inner != nil) != tt.hasInner {
+				t.Errorf("inner presence: got %v, want %v", s.Inner != nil, tt.hasInner)
+			}
+		})
+	}
+}
+
+func TestParse_SelectorComposition(t *testing.T) {
+	// Selector inside a boolean composition.
+	expr := mustParse(t, "orders@(status=shipped) AND total>500")
+	b, ok := expr.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr, got %T", expr)
+	}
+	if _, ok := b.Left.(*ast.SelectorExpr); !ok {
+		t.Errorf("expected SelectorExpr on left, got %T", b.Left)
+	}
+}
+
+func TestParse_SelectorErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"missing selector body", "items@"},
+		{"invalid selector name", "items@middle"},
+		{"unclosed inner", "items@(name=foo"},
+		{"empty inner", "items@()"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse(tt.input, 0); err == nil {
+				t.Error("expected error")
 			}
 		})
 	}

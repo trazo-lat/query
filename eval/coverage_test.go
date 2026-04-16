@@ -91,29 +91,48 @@ func TestValidateFuncCallFields_Errors(t *testing.T) {
 
 // TestSelectorPath covers the Selector AST branch in validate and matcher.
 func TestSelectorPath(t *testing.T) {
-	// Build a SelectorExpr manually since the parser doesn't fully support it yet
-	expr := &ast.SelectorExpr{
-		Base: &ast.QualifierExpr{
+	// @first on a known list field.
+	first := &ast.SelectorExpr{
+		Base:     &ast.PresenceExpr{Field: ast.FieldPath{"items"}},
+		Selector: "first",
+	}
+	m := compileMatcher(first, BuiltinFunctions())
+	got := m(func(f string) (any, bool) {
+		if f == "items" {
+			return []any{"a"}, true
+		}
+		return nil, false
+	})
+	if !got {
+		t.Error("expected @first match on non-empty slice")
+	}
+
+	// @(inner) against a slice of maps.
+	inner := &ast.SelectorExpr{
+		Base: &ast.PresenceExpr{Field: ast.FieldPath{"items"}},
+		Inner: &ast.QualifierExpr{
 			Field:    ast.FieldPath{"name"},
 			Operator: token.Eq,
 			Value:    ast.Value{Type: ast.ValueString, Str: "draft"},
 		},
 	}
-	m := compileMatcher(expr, BuiltinFunctions())
-	if m(func(f string) (any, bool) {
-		if f == "name" {
-			return "draft", true
+	m = compileMatcher(inner, BuiltinFunctions())
+	got = m(func(f string) (any, bool) {
+		if f == "items" {
+			return []any{map[string]any{"name": "draft"}}, true
 		}
 		return nil, false
-	}) != true {
-		t.Error("expected selector base match")
+	})
+	if !got {
+		t.Error("expected @(inner) match")
 	}
 
-	// Validator should handle SelectorExpr too
+	// Validator accepts selectors whose base field exists without OpPresence.
 	v := validate.New([]validate.FieldConfig{
+		{Name: "items", Type: validate.TypeText, AllowedOps: validate.TextOps},
 		{Name: "name", Type: validate.TypeText, AllowedOps: validate.TextOps},
 	})
-	if err := v.Validate(expr); err != nil {
+	if err := v.Validate(inner); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
