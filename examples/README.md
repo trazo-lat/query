@@ -23,6 +23,9 @@ go run ./examples/struct
 
 # Query restrictions and sandboxing
 go run ./examples/restrictions
+
+# @ selector operator — list-field predicates
+go run ./examples/selector
 ```
 
 ## Examples
@@ -35,6 +38,7 @@ go run ./examples/restrictions
 | [`functions/`](functions/) | Built-in functions (lower, upper, len, year, etc.) and custom function registration |
 | [`struct/`](struct/) | `CompileFor[T]` struct binding, `MatchStruct`, type safety |
 | [`restrictions/`](restrictions/) | `WithAllowedFields`, `WithAllowedOps`, `WithMaxDepth`, `WithMaxLength` |
+| [`selector/`](selector/) | `@first`, `@last`, `@(inner)` against map- and struct-backed list fields |
 
 ## Pattern: Implementing a Visitor
 
