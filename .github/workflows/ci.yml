@@ -38,13 +38,18 @@ jobs:
       - name: Check go mod tidy
         run: |
           go mod tidy
-          if ! git diff --exit-code go.mod go.sum; then
+          # Build paths list dynamically since go.sum may not exist (zero-dep lib)
+          paths=(go.mod)
+          if [ -f go.sum ]; then paths+=(go.sum); fi
+          if ! git diff --exit-code "${paths[@]}"; then
             echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy' and commit."
             exit 1
           fi
 
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        # wasm/ is excluded — it uses syscall/js which can't be type-checked
+        # outside of GOOS=js/GOARCH=wasm builds.
+        run: golangci-lint run ./token/... ./ast/... ./parser/... ./validate/... ./eval/... ./examples/... .
 
   test:
     name: Unit tests
@@ -58,7 +63,11 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Run tests
-        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          go test -race -count=1 \
+            -coverprofile=coverage.out -covermode=atomic \
+            -coverpkg=./token/...,./ast/...,./parser/...,./validate/...,./eval/...,./ \
+            ./token/... ./ast/... ./parser/... ./validate/... ./eval/... .
 
       - name: Print coverage summary
         run: go tool cover -func=coverage.out | tail -1
@@ -68,3 +77,25 @@ jobs:
         with:
           name: coverage-report
           path: coverage.out
+
+  wasm:
+    name: WASM build
+    runs-on: self-hosted
+    needs: [checks]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build WASM
+        run: |
+          cd wasm
+          GOOS=js GOARCH=wasm go build -o query.wasm .
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-wasm
+          path: wasm/query.wasm
