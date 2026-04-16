@@ -26,8 +26,8 @@ type BinaryExpr struct {
 
 // Pos returns the position of the binary expression.
 func (e *BinaryExpr) Pos() token.Position { return e.Position }
-func (e *BinaryExpr) node()               {}
-func (e *BinaryExpr) expr()               {}
+func (e *BinaryExpr) node()               { _ = e }
+func (e *BinaryExpr) expr()               { _ = e }
 
 // UnaryExpr represents a unary expression: NOT expr.
 type UnaryExpr struct {
@@ -38,8 +38,8 @@ type UnaryExpr struct {
 
 // Pos returns the position of the unary expression.
 func (e *UnaryExpr) Pos() token.Position { return e.Position }
-func (e *UnaryExpr) node()               {}
-func (e *UnaryExpr) expr()               {}
+func (e *UnaryExpr) node()               { _ = e }
+func (e *UnaryExpr) expr()               { _ = e }
 
 // QualifierExpr represents a field comparison: field op value.
 // For range expressions (field:start..end), EndValue is non-nil.
@@ -54,8 +54,8 @@ type QualifierExpr struct {
 
 // Pos returns the position of the qualifier expression.
 func (e *QualifierExpr) Pos() token.Position { return e.Position }
-func (e *QualifierExpr) node()               {}
-func (e *QualifierExpr) expr()               {}
+func (e *QualifierExpr) node()               { _ = e }
+func (e *QualifierExpr) expr()               { _ = e }
 
 // IsRange reports whether this is a range expression (field:start..end).
 func (e *QualifierExpr) IsRange() bool { return e.EndValue != nil }
@@ -74,8 +74,8 @@ type PresenceExpr struct {
 
 // Pos returns the position of the presence expression.
 func (e *PresenceExpr) Pos() token.Position { return e.Position }
-func (e *PresenceExpr) node()               {}
-func (e *PresenceExpr) expr()               {}
+func (e *PresenceExpr) node()               { _ = e }
+func (e *PresenceExpr) expr()               { _ = e }
 
 // SelectorExpr represents a selector expression: expr @first, expr @last, or expr @(inner).
 type SelectorExpr struct {
@@ -87,8 +87,8 @@ type SelectorExpr struct {
 
 // Pos returns the position of the selector expression.
 func (e *SelectorExpr) Pos() token.Position { return e.Position }
-func (e *SelectorExpr) node()               {}
-func (e *SelectorExpr) expr()               {}
+func (e *SelectorExpr) node()               { _ = e }
+func (e *SelectorExpr) expr()               { _ = e }
 
 // GroupExpr represents a parenthesized expression: (expression).
 type GroupExpr struct {
@@ -98,8 +98,8 @@ type GroupExpr struct {
 
 // Pos returns the position of the group expression.
 func (e *GroupExpr) Pos() token.Position { return e.Position }
-func (e *GroupExpr) node()               {}
-func (e *GroupExpr) expr()               {}
+func (e *GroupExpr) node()               { _ = e }
+func (e *GroupExpr) expr()               { _ = e }
 
 // FuncCallExpr represents a function call: lower(name), now(), len(description).
 //
@@ -115,8 +115,8 @@ type FuncCallExpr struct {
 
 // Pos returns the position of the function call.
 func (e *FuncCallExpr) Pos() token.Position { return e.Position }
-func (e *FuncCallExpr) node()               {}
-func (e *FuncCallExpr) expr()               {}
+func (e *FuncCallExpr) node()               { _ = e }
+func (e *FuncCallExpr) expr()               { _ = e }
 
 // FuncArg is a function argument: a field reference, a literal value, or a nested call.
 type FuncArg struct {

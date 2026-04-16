@@ -6,7 +6,7 @@ import (
 	"github.com/trazo-lat/query/token"
 )
 
-func TestWalk(t *testing.T) {
+func TestWalk_CountQualifiers(t *testing.T) {
 	// Build AST: a=1 AND (b=2 OR c=3)
 	expr := &BinaryExpr{
 		Op: token.And,
@@ -19,14 +19,12 @@ func TestWalk(t *testing.T) {
 			Expr: &BinaryExpr{
 				Op: token.Or,
 				Left: &QualifierExpr{
-					Field:    FieldPath{"b"},
-					Operator: token.Eq,
-					Value:    Value{Type: ValueString, Raw: "2", Str: "2"},
+					Field: FieldPath{"b"}, Operator: token.Eq,
+					Value: Value{Type: ValueString, Raw: "2", Str: "2"},
 				},
 				Right: &QualifierExpr{
-					Field:    FieldPath{"c"},
-					Operator: token.Eq,
-					Value:    Value{Type: ValueString, Raw: "3", Str: "3"},
+					Field: FieldPath{"c"}, Operator: token.Eq,
+					Value: Value{Type: ValueString, Raw: "3", Str: "3"},
 				},
 			},
 		},
@@ -45,45 +43,102 @@ func TestWalk(t *testing.T) {
 }
 
 func TestFields(t *testing.T) {
-	expr := &BinaryExpr{
-		Op: token.And,
-		Left: &QualifierExpr{
-			Field: FieldPath{"state"},
+	tests := []struct {
+		name string
+		expr Expression
+		want int
+	}{
+		{
+			name: "two fields",
+			expr: &BinaryExpr{
+				Op:    token.And,
+				Left:  &QualifierExpr{Field: FieldPath{"state"}},
+				Right: &PresenceExpr{Field: FieldPath{"labels", "dev"}},
+			},
+			want: 2,
 		},
-		Right: &PresenceExpr{
-			Field: FieldPath{"labels", "dev"},
+		{
+			name: "single qualifier",
+			expr: &QualifierExpr{Field: FieldPath{"state"}},
+			want: 1,
+		},
+		{
+			name: "single presence",
+			expr: &PresenceExpr{Field: FieldPath{"tire_size"}},
+			want: 1,
 		},
 	}
-	fps := Fields(expr)
-	if len(fps) != 2 {
-		t.Fatalf("got %d fields, want 2", len(fps))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Fields(tt.expr)
+			if len(got) != tt.want {
+				t.Errorf("got %d, want %d", len(got), tt.want)
+			}
+		})
 	}
 }
 
 func TestIsSimple(t *testing.T) {
-	if !IsSimple(&QualifierExpr{}) {
-		t.Error("QualifierExpr should be simple")
+	tests := []struct {
+		name string
+		expr Expression
+		want bool
+	}{
+		{"qualifier", &QualifierExpr{}, true},
+		{"presence", &PresenceExpr{}, true},
+		{"binary", &BinaryExpr{}, false},
+		{"unary", &UnaryExpr{}, false},
+		{"group", &GroupExpr{}, false},
 	}
-	if !IsSimple(&PresenceExpr{}) {
-		t.Error("PresenceExpr should be simple")
-	}
-	if IsSimple(&BinaryExpr{}) {
-		t.Error("BinaryExpr should not be simple")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsSimple(tt.expr); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
 func TestDepth(t *testing.T) {
-	// Single qualifier: depth 1
-	if d := Depth(&QualifierExpr{}); d != 1 {
-		t.Errorf("qualifier depth: got %d, want 1", d)
+	tests := []struct {
+		name string
+		expr Expression
+		want int
+	}{
+		{"nil", nil, 0},
+		{"single qualifier", &QualifierExpr{}, 1},
+		{
+			name: "binary with two qualifiers",
+			expr: &BinaryExpr{
+				Left:  &QualifierExpr{},
+				Right: &QualifierExpr{},
+			},
+			want: 2,
+		},
+		{
+			name: "unary + group + qualifier",
+			expr: &UnaryExpr{
+				Expr: &GroupExpr{
+					Expr: &QualifierExpr{Field: FieldPath{"a"}},
+				},
+			},
+			want: 3,
+		},
+		{
+			name: "selector with inner",
+			expr: &SelectorExpr{
+				Base:  &QualifierExpr{Field: FieldPath{"items"}},
+				Inner: &QualifierExpr{Field: FieldPath{"x"}},
+			},
+			want: 2,
+		},
 	}
-	// Binary with two qualifiers: depth 2
-	expr := &BinaryExpr{
-		Left:  &QualifierExpr{},
-		Right: &QualifierExpr{},
-	}
-	if d := Depth(expr); d != 2 {
-		t.Errorf("binary depth: got %d, want 2", d)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Depth(tt.expr); got != tt.want {
+				t.Errorf("got %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -94,33 +149,51 @@ func TestString_Nil(t *testing.T) {
 }
 
 func TestWalk_Nil(t *testing.T) {
-	Walk(nil, func(e Expression) bool { return true })
+	Walk(nil, func(Expression) bool { return true })
 }
 
 func TestFieldPath(t *testing.T) {
-	fp := FieldPath{"labels", "dev"}
-	if fp.String() != "labels.dev" {
-		t.Errorf("String: got %q", fp.String())
+	tests := []struct {
+		name     string
+		fp       FieldPath
+		wantStr  string
+		wantRoot string
+		wantNest bool
+	}{
+		{"empty", FieldPath{}, "", "", false},
+		{"single", FieldPath{"state"}, "state", "state", false},
+		{"nested", FieldPath{"labels", "dev"}, "labels.dev", "labels", true},
 	}
-	if fp.Root() != "labels" {
-		t.Errorf("Root: got %q", fp.Root())
-	}
-	if !fp.IsNested() {
-		t.Error("expected IsNested=true")
-	}
-	single := FieldPath{"state"}
-	if single.IsNested() {
-		t.Error("expected IsNested=false for single")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.fp.String(); got != tt.wantStr {
+				t.Errorf("String: got %q, want %q", got, tt.wantStr)
+			}
+			if got := tt.fp.Root(); got != tt.wantRoot {
+				t.Errorf("Root: got %q, want %q", got, tt.wantRoot)
+			}
+			if got := tt.fp.IsNested(); got != tt.wantNest {
+				t.Errorf("IsNested: got %v, want %v", got, tt.wantNest)
+			}
+		})
 	}
 }
 
 func TestValueAny(t *testing.T) {
-	v := Value{Type: ValueInteger, Int: 42}
-	if got, ok := v.Any().(int64); !ok || got != 42 {
-		t.Errorf("Any: got %v", v.Any())
+	tests := []struct {
+		name string
+		v    Value
+		want any
+	}{
+		{"integer", Value{Type: ValueInteger, Int: 42}, int64(42)},
+		{"boolean", Value{Type: ValueBoolean, Bool: true}, true},
 	}
-	v2 := Value{Type: ValueBoolean, Bool: true}
-	if got, ok := v2.Any().(bool); !ok || !got {
-		t.Errorf("Any: got %v", v2.Any())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.v.Any()
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

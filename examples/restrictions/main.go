@@ -90,13 +90,14 @@ func main() {
 	fmt.Println("  Scenario: limit query string length (default 256, configurable)")
 	fmt.Println()
 
-	_, err := eval.Compile("state=draft", allFields, eval.WithMaxLength(5))
-	fmt.Printf("  %-40s  BLOCKED: %v\n", "state=draft (maxLength=5)", err)
+	_, errShort := eval.Compile("state=draft", allFields, eval.WithMaxLength(5))
+	fmt.Printf("  %-40s  BLOCKED: %v\n", "state=draft (maxLength=5)", errShort)
 
-	_, err = eval.Compile("state=draft", allFields, eval.WithMaxLength(100))
-	fmt.Printf("  %-40s  OK\n", "state=draft (maxLength=100)")
+	if _, err := eval.Compile("state=draft", allFields, eval.WithMaxLength(100)); err == nil {
+		fmt.Printf("  %-40s  OK\n", "state=draft (maxLength=100)")
+	}
 
-	_, err = eval.Compile("state=draft", allFields, eval.WithMaxLength(0))
-	fmt.Printf("  %-40s  OK (length check disabled)\n", "state=draft (maxLength=0)")
-	_ = err
+	if _, err := eval.Compile("state=draft", allFields, eval.WithMaxLength(0)); err == nil {
+		fmt.Printf("  %-40s  OK (length check disabled)\n", "state=draft (maxLength=0)")
+	}
 }

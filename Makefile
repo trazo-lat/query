@@ -11,8 +11,12 @@ build:
 test:
 	$(GOTEST) $(GOFLAGS) -count=1 ./...
 
+COVERPKG := ./token/...,./ast/...,./parser/...,./validate/...,./eval/...,./
+
 coverage:
-	$(GOTEST) $(GOFLAGS) -coverprofile=$(COVERAGE) -covermode=atomic ./...
+	$(GOTEST) $(GOFLAGS) -coverprofile=$(COVERAGE) -covermode=atomic \
+		-coverpkg=$(COVERPKG) \
+		./token/... ./ast/... ./parser/... ./validate/... ./eval/... .
 	$(GO) tool cover -func=$(COVERAGE) | tail -1
 
 lint:

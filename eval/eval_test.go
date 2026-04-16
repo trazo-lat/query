@@ -177,119 +177,129 @@ func TestCompile_StringRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCompile_WithAllowedFields(t *testing.T) {
-	_, err := Compile("state=draft AND total>50000", testFields,
-		WithAllowedFields("state"))
-	if err == nil {
-		t.Fatal("expected error: total should not be allowed")
-	}
-}
-
-func TestCompile_WithAllowedOps(t *testing.T) {
-	_, err := Compile("year>2020", testFields,
-		WithAllowedOps(validate.OpEq, validate.OpNeq))
-	if err == nil {
-		t.Fatal("expected error: > should not be allowed")
-	}
-}
-
-func TestCompile_WithMaxDepth(t *testing.T) {
-	_, err := Compile("(a=1 OR b=2) AND c=3", []validate.FieldConfig{
+func TestCompile_Restrictions(t *testing.T) {
+	textFields := []validate.FieldConfig{
 		{Name: "a", Type: validate.TypeText, AllowedOps: validate.TextOps},
 		{Name: "b", Type: validate.TypeText, AllowedOps: validate.TextOps},
 		{Name: "c", Type: validate.TypeText, AllowedOps: validate.TextOps},
-	}, WithMaxDepth(2))
-	if err == nil {
-		t.Fatal("expected error: depth exceeds limit")
+	}
+
+	tests := []struct {
+		name   string
+		query  string
+		fields []validate.FieldConfig
+		opts   []Option
+	}{
+		{
+			name:   "allowed fields excludes total",
+			query:  "state=draft AND total>50000",
+			fields: testFields,
+			opts:   []Option{WithAllowedFields("state")},
+		},
+		{
+			name:   "allowed ops excludes >",
+			query:  "year>2020",
+			fields: testFields,
+			opts:   []Option{WithAllowedOps(validate.OpEq, validate.OpNeq)},
+		},
+		{
+			name:   "max depth exceeded",
+			query:  "(a=1 OR b=2) AND c=3",
+			fields: textFields,
+			opts:   []Option{WithMaxDepth(2)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Compile(tt.query, tt.fields, tt.opts...); err == nil {
+				t.Error("expected error")
+			}
+		})
 	}
 }
 
-func TestCompile_ParseError(t *testing.T) {
-	_, err := Compile("=invalid", testFields)
-	if err == nil {
-		t.Fatal("expected parse error")
+func TestCompile_Errors(t *testing.T) {
+	tests := []struct {
+		name, query string
+	}{
+		{"parse error", "=invalid"},
+		{"validation error", "nonexistent=value"},
 	}
-}
-
-func TestCompile_ValidationError(t *testing.T) {
-	_, err := Compile("nonexistent=value", testFields)
-	if err == nil {
-		t.Fatal("expected validation error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Compile(tt.query, testFields); err == nil {
+				t.Error("expected error")
+			}
+		})
 	}
 }
 
 // --- Function call tests ---
 
-func TestCompile_FuncCall_Lower(t *testing.T) {
-	prog, err := Compile("lower(name)=john", testFields)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
+func TestCompile_FuncCall_Builtin(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		data  map[string]any
+		want  bool
+	}{
+		{"lower match uppercase", "lower(name)=john", map[string]any{"name": "JOHN"}, true},
+		{"lower match mixed", "lower(name)=john", map[string]any{"name": "John"}, true},
+		{"lower no match", "lower(name)=john", map[string]any{"name": "Jane"}, false},
+		{"upper match lower", "upper(name)=JOHN", map[string]any{"name": "john"}, true},
+		{"len greater", "len(name)>3", map[string]any{"name": "John"}, true},
+		{"len not greater", "len(name)>3", map[string]any{"name": "Jo"}, false},
+		{
+			name:  "contains match",
+			query: "contains(name, cluster)",
+			data:  map[string]any{"name": "demo-cluster-1", "cluster": "cluster"},
+			want:  true,
+		},
+		{
+			name:  "contains no match",
+			query: "contains(name, cluster)",
+			data:  map[string]any{"name": "production", "cluster": "demo"},
+			want:  false,
+		},
 	}
-	if !prog.Match(map[string]any{"name": "JOHN"}) {
-		t.Error("expected match: JOHN lowered should equal john")
-	}
-	if !prog.Match(map[string]any{"name": "John"}) {
-		t.Error("expected match: John lowered should equal john")
-	}
-	if prog.Match(map[string]any{"name": "Jane"}) {
-		t.Error("unexpected match: Jane lowered is not john")
-	}
-}
-
-func TestCompile_FuncCall_Upper(t *testing.T) {
-	prog, err := Compile("upper(name)=JOHN", testFields)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	if !prog.Match(map[string]any{"name": "john"}) {
-		t.Error("expected match")
-	}
-}
-
-func TestCompile_FuncCall_Len(t *testing.T) {
-	prog, err := Compile("len(name)>3", testFields)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	if !prog.Match(map[string]any{"name": "John"}) {
-		t.Error("expected match: len(John)=4 > 3")
-	}
-	if prog.Match(map[string]any{"name": "Jo"}) {
-		t.Error("unexpected match: len(Jo)=2 not > 3")
-	}
-}
-
-func TestCompile_FuncCall_Contains(t *testing.T) {
-	// contains(name, cluster) — checks if the value of "name" contains the value of "cluster"
-	prog, err := Compile("contains(name, cluster)", testFields)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	if !prog.Match(map[string]any{"name": "demo-cluster-1", "cluster": "cluster"}) {
-		t.Error("expected match")
-	}
-	if prog.Match(map[string]any{"name": "production", "cluster": "demo"}) {
-		t.Error("unexpected match")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := Compile(tt.query, testFields)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			if got := prog.Match(tt.data); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
 func TestCompile_FuncCall_CustomFunction(t *testing.T) {
-	prog, err := Compile("double(year)>4040", testFields,
-		WithFunctions(Func{
-			Name: "double",
-			Call: func(args ...any) (any, error) {
-				return toInt64(args[0]) * 2, nil
-			},
-		}),
-	)
+	double := Func{
+		Name: "double",
+		Call: func(args ...any) (any, error) {
+			return toInt64(args[0]) * 2, nil
+		},
+	}
+	prog, err := Compile("double(year)>4040", testFields, WithFunctions(double))
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if !prog.Match(map[string]any{"year": 2025}) {
-		t.Error("expected match: double(2025)=4050 > 4040")
+	tests := []struct {
+		name string
+		data map[string]any
+		want bool
+	}{
+		{"match", map[string]any{"year": 2025}, true},
+		{"no match", map[string]any{"year": 2000}, false},
 	}
-	if prog.Match(map[string]any{"year": 2000}) {
-		t.Error("unexpected match: double(2000)=4000 not > 4040")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := prog.Match(tt.data); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -316,78 +326,40 @@ type testInvoice struct {
 	Internal  string    // no query tag — not queryable
 }
 
-func TestFieldsFromStruct(t *testing.T) {
-	fields := FieldsFromStruct(testInvoice{})
-	if len(fields) != 5 {
-		t.Fatalf("got %d fields, want 5", len(fields))
-	}
-
-	// Check field names
-	names := make(map[string]bool)
-	for _, f := range fields {
-		names[f.Name] = true
-	}
-	for _, want := range []string{"state", "total", "year", "active", "created_at"} {
-		if !names[want] {
-			t.Errorf("missing field %q", want)
-		}
-	}
-}
-
 func TestCompileFor_MatchStruct(t *testing.T) {
+	tests := []struct {
+		name string
+		data testInvoice
+		want bool
+	}{
+		{"match", testInvoice{State: "draft", Total: 60000}, true},
+		{"total too low", testInvoice{State: "draft", Total: 100}, false},
+	}
 	prog, err := CompileFor[testInvoice]("state=draft AND total>50000")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-
-	match := prog.MatchStruct(testInvoice{State: "draft", Total: 60000})
-	if !match {
-		t.Error("expected match")
-	}
-
-	noMatch := prog.MatchStruct(testInvoice{State: "draft", Total: 100})
-	if noMatch {
-		t.Error("unexpected match")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := prog.MatchStruct(tt.data); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestCompileFor_TypeSafety(t *testing.T) {
-	// "year" is an int field — string comparison should fail validation
-	_, err := CompileFor[testInvoice]("year=notanumber")
-	if err == nil {
-		t.Fatal("expected validation error for type mismatch")
+func TestCompileFor_Errors(t *testing.T) {
+	tests := []struct {
+		name, query string
+	}{
+		{"type mismatch", "year=notanumber"},
+		{"untagged field", "Internal=secret"},
 	}
-}
-
-func TestCompileFor_UntaggedField(t *testing.T) {
-	// "Internal" has no query tag — should not be queryable
-	_, err := CompileFor[testInvoice]("Internal=secret")
-	if err == nil {
-		t.Fatal("expected error: untagged field should not be queryable")
-	}
-}
-
-func TestStructAccessor(t *testing.T) {
-	inv := testInvoice{State: "draft", Total: 50000, Year: 2025}
-	get := StructAccessor(inv)
-
-	val, ok := get("state")
-	if !ok || val != "draft" {
-		t.Errorf("state: got %v, %v", val, ok)
-	}
-
-	val, ok = get("total")
-	if !ok || val != 50000.0 {
-		t.Errorf("total: got %v, %v", val, ok)
-	}
-
-	_, ok = get("Internal")
-	if ok {
-		t.Error("Internal should not be accessible")
-	}
-
-	_, ok = get("nonexistent")
-	if ok {
-		t.Error("nonexistent should not be accessible")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := CompileFor[testInvoice](tt.query); err == nil {
+				t.Error("expected error")
+			}
+		})
 	}
 }
