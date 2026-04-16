@@ -1,6 +1,3 @@
-// Package query implements a query language lexer, parser, AST, and validator
-// for the Trazo platform. It provides a unified query syntax used across all
-// clients (CLI, Web UI, API, WASM) with zero external dependencies.
 package query
 
 import "fmt"
