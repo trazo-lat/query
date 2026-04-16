@@ -9,6 +9,7 @@ type options struct {
 	allowedFields []string
 	funcs         FuncRegistry
 	noBuiltins    bool
+	customVal     validate.AstValidator
 }
 
 func defaultOpts() options {
@@ -60,4 +61,12 @@ func WithFunctions(funcs ...Func) Option {
 // Only explicitly registered functions via [WithFunctions] will be available.
 func WithNoBuiltins() Option {
 	return func(o *options) { o.noBuiltins = true }
+}
+
+// WithCustomValidator installs a [validate.AstValidator] hook that extends
+// validation with consumer-defined rules. See [validate.WithCustomValidator]
+// for full semantics, including how [validate.AstValidator.GetFieldConfig]
+// overrides the static field config.
+func WithCustomValidator(cv validate.AstValidator) Option {
+	return func(o *options) { o.customVal = cv }
 }
