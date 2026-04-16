@@ -40,6 +40,8 @@ linters:
       default-signifies-exhaustive: true
 
   exclusions:
+    paths:
+      - wasm
     rules:
       - path: _test\.go
         linters:

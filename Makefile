@@ -16,7 +16,7 @@ coverage:
 	$(GO) tool cover -func=$(COVERAGE) | tail -1
 
 lint:
-	golangci-lint run ./...
+	golangci-lint run ./token/... ./ast/... ./parser/... ./validate/... ./eval/... ./examples/... .
 
 fmt:
 	gofmt -w .

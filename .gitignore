@@ -18,3 +18,8 @@ Thumbs.db
 
 # Config
 trazo.yaml
+
+# Node
+node_modules/
+wasm/npm/dist/
+wasm/npm/src/wasm_exec.js
