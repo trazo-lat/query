@@ -1,0 +1,58 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - misspell
+    - unconvert
+    - gocritic
+    - revive
+    - errorlint
+    - nilerr
+    - thelper
+    - exhaustive
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+    revive:
+      rules:
+        - name: exported
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: increment-decrement
+        - name: var-naming
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+  exclusions:
+    paths:
+      - wasm
+    rules:
+      - path: _test\.go
+        linters:
+          - revive
+        text: "dot-imports|unused-parameter"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/trazo-lat/query

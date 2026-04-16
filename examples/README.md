@@ -1,0 +1,57 @@
+# Examples
+
+Runnable examples demonstrating every capability of the query library.
+
+## Quick Start
+
+```bash
+# SQL generation
+go run ./examples/sql "state=draft AND total>50000"
+go run ./examples/sql "name=John* AND created_at:2026-01-01..2026-03-31"
+
+# JSON AST
+go run ./examples/json "(state=draft OR state=issued) AND NOT cluster=demo"
+
+# In-memory filtering
+go run ./examples/filter
+
+# Built-in and custom functions
+go run ./examples/functions
+
+# Struct binding with compile-time type safety
+go run ./examples/struct
+
+# Query restrictions and sandboxing
+go run ./examples/restrictions
+```
+
+## Examples
+
+| Directory | What it demonstrates |
+|-----------|---------------------|
+| [`sql/`](sql/) | SQL WHERE clause generation with parameterized queries ($1, $2) |
+| [`json/`](json/) | JSON AST serialization for APIs and frontends |
+| [`filter/`](filter/) | In-memory filter functions with wildcard matching |
+| [`functions/`](functions/) | Built-in functions (lower, upper, len, year, etc.) and custom function registration |
+| [`struct/`](struct/) | `CompileFor[T]` struct binding, `MatchStruct`, type safety |
+| [`restrictions/`](restrictions/) | `WithAllowedFields`, `WithAllowedOps`, `WithMaxDepth`, `WithMaxLength` |
+
+## Pattern: Implementing a Visitor
+
+Every code generation target follows the same pattern — implement `ast.Visitor[T]`:
+
+```go
+type myVisitor struct{ /* state */ }
+
+func (v *myVisitor) VisitBinary(e *ast.BinaryExpr) T    { /* ... */ }
+func (v *myVisitor) VisitUnary(e *ast.UnaryExpr) T      { /* ... */ }
+func (v *myVisitor) VisitQualifier(e *ast.QualifierExpr) T { /* ... */ }
+func (v *myVisitor) VisitPresence(e *ast.PresenceExpr) T { /* ... */ }
+func (v *myVisitor) VisitGroup(e *ast.GroupExpr) T       { /* ... */ }
+func (v *myVisitor) VisitSelector(e *ast.SelectorExpr) T { /* ... */ }
+func (v *myVisitor) VisitFuncCall(e *ast.FuncCallExpr) T { /* ... */ }
+
+result := ast.Visit[T](&myVisitor{}, expr)
+```
+
+See [`sql/main.go`](sql/main.go) for a complete reference implementation.

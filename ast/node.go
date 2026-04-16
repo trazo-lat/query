@@ -1,0 +1,140 @@
+package ast
+
+import (
+	"github.com/trazo-lat/query/token"
+)
+
+// Node is the common interface for all AST nodes.
+type Node interface {
+	Pos() token.Position
+	node() // marker — restricts implementations to this package
+}
+
+// Expression is an AST node that represents a query expression.
+type Expression interface {
+	Node
+	expr() // marker — restricts implementations to this package
+}
+
+// BinaryExpr represents a binary logical expression: left AND right, left OR right.
+type BinaryExpr struct {
+	Op       token.Type // token.And or token.Or
+	Left     Expression
+	Right    Expression
+	Position token.Position
+}
+
+// Pos returns the position of the binary expression.
+func (e *BinaryExpr) Pos() token.Position { return e.Position }
+func (e *BinaryExpr) node()               { _ = e }
+func (e *BinaryExpr) expr()               { _ = e }
+
+// UnaryExpr represents a unary expression: NOT expr.
+type UnaryExpr struct {
+	Op       token.Type // token.Not
+	Expr     Expression
+	Position token.Position
+}
+
+// Pos returns the position of the unary expression.
+func (e *UnaryExpr) Pos() token.Position { return e.Position }
+func (e *UnaryExpr) node()               { _ = e }
+func (e *UnaryExpr) expr()               { _ = e }
+
+// QualifierExpr represents a field comparison: field op value.
+// For range expressions (field:start..end), EndValue is non-nil.
+type QualifierExpr struct {
+	Field     FieldPath     // e.g., ["labels", "dev"]
+	FieldFunc *FuncCallExpr // optional: function wrapping the field, e.g., lower(name)
+	Operator  token.Type    // comparison operator
+	Value     Value         // primary value
+	EndValue  *Value        // end value for range expressions
+	Position  token.Position
+}
+
+// Pos returns the position of the qualifier expression.
+func (e *QualifierExpr) Pos() token.Position { return e.Position }
+func (e *QualifierExpr) node()               { _ = e }
+func (e *QualifierExpr) expr()               { _ = e }
+
+// IsRange reports whether this is a range expression (field:start..end).
+func (e *QualifierExpr) IsRange() bool { return e.EndValue != nil }
+
+// IsWildcard reports whether this qualifier uses a wildcard value.
+func (e *QualifierExpr) IsWildcard() bool { return e.Value.Wildcard }
+
+// HasFieldFunc reports whether this qualifier has a field transform function.
+func (e *QualifierExpr) HasFieldFunc() bool { return e.FieldFunc != nil }
+
+// PresenceExpr represents a field presence check: just the field name with no operator.
+type PresenceExpr struct {
+	Field    FieldPath
+	Position token.Position
+}
+
+// Pos returns the position of the presence expression.
+func (e *PresenceExpr) Pos() token.Position { return e.Position }
+func (e *PresenceExpr) node()               { _ = e }
+func (e *PresenceExpr) expr()               { _ = e }
+
+// SelectorExpr represents a selector expression: expr @first, expr @last, or expr @(inner).
+type SelectorExpr struct {
+	Base     Expression
+	Selector string     // "first", "last", or "" for @(...)
+	Inner    Expression // inner expression for @(...)
+	Position token.Position
+}
+
+// Pos returns the position of the selector expression.
+func (e *SelectorExpr) Pos() token.Position { return e.Position }
+func (e *SelectorExpr) node()               { _ = e }
+func (e *SelectorExpr) expr()               { _ = e }
+
+// GroupExpr represents a parenthesized expression: (expression).
+type GroupExpr struct {
+	Expr     Expression
+	Position token.Position
+}
+
+// Pos returns the position of the group expression.
+func (e *GroupExpr) Pos() token.Position { return e.Position }
+func (e *GroupExpr) node()               { _ = e }
+func (e *GroupExpr) expr()               { _ = e }
+
+// FuncCallExpr represents a function call: lower(name), now(), len(description).
+//
+// Function calls can appear:
+//   - As field transforms: lower(name)=john* — wraps a field lookup
+//   - As value generators: created_at>=now() — produces a comparison value
+//   - As boolean predicates: contains(tags, "urgent") — standalone filter
+type FuncCallExpr struct {
+	Name     string    // function name
+	Args     []FuncArg // arguments
+	Position token.Position
+}
+
+// Pos returns the position of the function call.
+func (e *FuncCallExpr) Pos() token.Position { return e.Position }
+func (e *FuncCallExpr) node()               { _ = e }
+func (e *FuncCallExpr) expr()               { _ = e }
+
+// FuncArg is a function argument: a field reference, a literal value, or a nested call.
+type FuncArg struct {
+	Field *FieldPath    // field reference: name, labels.dev
+	Value *Value        // literal: "urgent", 42, true
+	Call  *FuncCallExpr // nested function: year(now())
+}
+
+// String returns a debug representation of the argument.
+func (a FuncArg) String() string {
+	switch {
+	case a.Field != nil:
+		return a.Field.String()
+	case a.Value != nil:
+		return a.Value.Raw
+	case a.Call != nil:
+		return a.Call.Name + "(...)"
+	default:
+		return "<empty>"
+	}
+}
