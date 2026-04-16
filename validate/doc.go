@@ -13,4 +13,7 @@
 //	if err := v.Validate(expr); err != nil {
 //	    // handle validation errors
 //	}
+//
+// Domain-specific rules plug in via the [AstValidator] interface and the
+// [WithCustomValidator] option. See the interface docs for semantics.
 package validate

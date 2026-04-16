@@ -26,6 +26,9 @@ go run ./examples/restrictions
 
 # @ selector operator — list-field predicates
 go run ./examples/selector
+
+# Custom validation rules (per-tenant access, cross-field, value-range)
+go run ./examples/customvalidator
 ```
 
 ## Examples
@@ -39,6 +42,7 @@ go run ./examples/selector
 | [`struct/`](struct/) | `CompileFor[T]` struct binding, `MatchStruct`, type safety |
 | [`restrictions/`](restrictions/) | `WithAllowedFields`, `WithAllowedOps`, `WithMaxDepth`, `WithMaxLength` |
 | [`selector/`](selector/) | `@first`, `@last`, `@(inner)` against map- and struct-backed list fields |
+| [`customvalidator/`](customvalidator/) | `AstValidator` hook: per-tenant field denylists, cross-field rules, value ranges |
 
 ## Pattern: Implementing a Visitor
 

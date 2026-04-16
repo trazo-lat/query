@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,7 @@ const (
 	ErrFieldNotFound      ErrorKind = iota // field not in config
 	ErrOperatorNotAllowed                  // operator not permitted for field
 	ErrTypeMismatch                        // value type incompatible with field type
+	ErrCustomRule                          // error raised by a custom [AstValidator]
 )
 
 // Error is a structured validation error.
@@ -60,15 +62,36 @@ func (el ErrorList) Unwrap() []error {
 	return errs
 }
 
+// Option configures a [Validator].
+type Option func(*Validator)
+
+// WithCustomValidator installs an [AstValidator] hook that extends validation
+// with consumer-defined rules.
+//
+// When set, [AstValidator.GetFieldConfig] is consulted first for every field
+// reference and overrides the static config: a result of (_, false) means the
+// field is unknown, even if it is declared statically. This enables tenant-
+// scoped field access control. Consumers that want to fall back to the static
+// config should do so explicitly inside their implementation.
+//
+// [AstValidator.ValidateCustomRules] is invoked once on the root expression
+// after all built-in checks have run. Errors returned are appended to the
+// [ErrorList] alongside built-in errors; an [ErrorList] or *[Error] is merged
+// as-is, other errors are wrapped with [ErrCustomRule].
+func WithCustomValidator(cv AstValidator) Option {
+	return func(v *Validator) { v.custom = cv }
+}
+
 // Validator validates a parsed AST against field configurations.
 type Validator struct {
 	fields map[string]FieldConfig
 	nested map[string]FieldConfig
+	custom AstValidator
 	errors ErrorList
 }
 
-// New creates a validator with the given field configs.
-func New(fields []FieldConfig) *Validator {
+// New creates a validator with the given field configs and options.
+func New(fields []FieldConfig, opts ...Option) *Validator {
 	v := &Validator{
 		fields: make(map[string]FieldConfig, len(fields)),
 		nested: make(map[string]FieldConfig),
@@ -79,18 +102,64 @@ func New(fields []FieldConfig) *Validator {
 			v.nested[f.Name] = f
 		}
 	}
+	for _, opt := range opts {
+		opt(v)
+	}
 	return v
 }
 
 // Validate checks the AST against the field configurations.
 // It collects all errors rather than stopping at the first one.
+//
+// When a custom [AstValidator] is installed via [WithCustomValidator], its
+// [AstValidator.ValidateCustomRules] method is called once on the root
+// expression after built-in checks complete. Returned errors are merged into
+// the resulting [ErrorList].
 func (v *Validator) Validate(expr ast.Expression) error {
 	v.errors = nil
 	v.validate(expr)
+	if v.custom != nil && expr != nil {
+		if err := v.custom.ValidateCustomRules(expr); err != nil {
+			v.appendCustomErr(expr, err)
+		}
+	}
 	if len(v.errors) == 0 {
 		return nil
 	}
 	return v.errors
+}
+
+// appendCustomErr merges an error returned by [AstValidator.ValidateCustomRules]
+// into the running error list. Structured errors ([Error], [ErrorList]) are
+// preserved; any other error is wrapped as a single [ErrCustomRule] entry
+// positioned at the root expression. Wrapping via [errors.As] is honored so
+// consumers can wrap structured errors with context.
+func (v *Validator) appendCustomErr(root ast.Expression, err error) {
+	var list ErrorList
+	if errors.As(err, &list) {
+		v.errors = append(v.errors, list...)
+		return
+	}
+	var single *Error
+	if errors.As(err, &single) {
+		v.errors = append(v.errors, single)
+		return
+	}
+	// Fall back to wrapping unknown error shapes as a single entry at the root.
+	// Note: errors.Join-style errors are treated as opaque — the combined
+	// message is preserved but positions of individual entries are lost.
+	var joined interface{ Unwrap() []error }
+	if errors.As(err, &joined) {
+		for _, sub := range joined.Unwrap() {
+			v.appendCustomErr(root, sub)
+		}
+		return
+	}
+	v.errors = append(v.errors, &Error{
+		Message:  err.Error(),
+		Position: root.Pos(),
+		Kind:     ErrCustomRule,
+	})
 }
 
 func (v *Validator) validate(expr ast.Expression) {
@@ -197,12 +266,25 @@ func (v *Validator) validatePresence(p *ast.PresenceExpr) {
 }
 
 func (v *Validator) resolveField(name string) (FieldConfig, bool) {
+	if v.custom != nil {
+		if cfg, ok := v.custom.GetFieldConfig(name); ok {
+			return cfg, true
+		}
+		// Nested fallthrough still honors the custom validator: look up the
+		// top-level segment (e.g., "labels" for "labels.dev") through the hook
+		// so tenants can allow/deny entire nested namespaces.
+		if idx := strings.IndexByte(name, '.'); idx > 0 {
+			if cfg, ok := v.custom.GetFieldConfig(name[:idx]); ok && cfg.Nested {
+				return cfg, true
+			}
+		}
+		return FieldConfig{}, false
+	}
 	if cfg, ok := v.fields[name]; ok {
 		return cfg, true
 	}
-	parts := strings.SplitN(name, ".", 2)
-	if len(parts) == 2 {
-		if cfg, ok := v.nested[parts[0]]; ok {
+	if idx := strings.IndexByte(name, '.'); idx > 0 {
+		if cfg, ok := v.nested[name[:idx]]; ok {
 			return cfg, true
 		}
 	}

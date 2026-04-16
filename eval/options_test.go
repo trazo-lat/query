@@ -1,10 +1,99 @@
 package eval
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/trazo-lat/query/ast"
 	"github.com/trazo-lat/query/validate"
 )
+
+// tenantValidator is a test AstValidator that blocks a denylist of fields
+// and rejects any query mentioning the literal string "secret".
+type tenantValidator struct {
+	blocked map[string]bool
+	static  map[string]validate.FieldConfig
+}
+
+func (t *tenantValidator) GetFieldConfig(name string) (validate.FieldConfig, bool) {
+	if t.blocked[name] {
+		return validate.FieldConfig{}, false
+	}
+	cfg, ok := t.static[name]
+	return cfg, ok
+}
+
+func (t *tenantValidator) ValidateCustomRules(node ast.Expression) error {
+	var rejected bool
+	ast.Walk(node, func(e ast.Expression) bool {
+		q, ok := e.(*ast.QualifierExpr)
+		if !ok {
+			return true
+		}
+		if q.Value.Type == ast.ValueString && q.Value.Str == "secret" {
+			rejected = true
+		}
+		return true
+	})
+	if rejected {
+		return errors.New("queries referencing 'secret' are not allowed")
+	}
+	return nil
+}
+
+func TestWithCustomValidator(t *testing.T) {
+	fields := []validate.FieldConfig{
+		{Name: "state", Type: validate.TypeText, AllowedOps: validate.TextOps},
+		{Name: "total", Type: validate.TypeDecimal, AllowedOps: validate.NumericOps},
+		{Name: "notes", Type: validate.TypeText, AllowedOps: validate.TextOps},
+	}
+	cv := &tenantValidator{
+		blocked: map[string]bool{"total": true},
+		static: map[string]validate.FieldConfig{
+			"state": fields[0],
+			"notes": fields[2],
+		},
+	}
+
+	tests := []struct {
+		name    string
+		query   string
+		wantErr bool
+	}{
+		{"allowed field + clean value", "state=draft", false},
+		{"blocked field rejected", "total>100", true},
+		{"custom rule rejects secret", "notes=secret", true},
+		{"unrelated value passes", "notes=hello", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Compile(tt.query, fields, WithCustomValidator(cv))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("wantErr=%v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestWithCustomValidator_MatchStillWorks(t *testing.T) {
+	// A compiled program with a custom validator is still matchable.
+	fields := []validate.FieldConfig{
+		{Name: "state", Type: validate.TypeText, AllowedOps: validate.TextOps},
+	}
+	cv := &tenantValidator{
+		static: map[string]validate.FieldConfig{"state": fields[0]},
+	}
+	prog, err := Compile("state=draft", fields, WithCustomValidator(cv))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if !prog.Match(map[string]any{"state": "draft"}) {
+		t.Error("expected match")
+	}
+	if prog.Match(map[string]any{"state": "issued"}) {
+		t.Error("expected no match")
+	}
+}
 
 func TestWithMaxLength(t *testing.T) {
 	fields := []validate.FieldConfig{

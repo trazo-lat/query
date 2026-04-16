@@ -2,8 +2,10 @@ package validate
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/trazo-lat/query/ast"
 	"github.com/trazo-lat/query/parser"
 )
 
@@ -139,5 +141,311 @@ func TestValidate_EmptyConfig(t *testing.T) {
 	v := New(nil)
 	if err := v.Validate(expr); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// fakeAstValidator is a configurable [AstValidator] used by the tests below.
+type fakeAstValidator struct {
+	lookup func(string) (FieldConfig, bool)
+	rules  func(ast.Expression) error
+}
+
+func (f *fakeAstValidator) GetFieldConfig(name string) (FieldConfig, bool) {
+	if f.lookup == nil {
+		return FieldConfig{}, false
+	}
+	return f.lookup(name)
+}
+
+func (f *fakeAstValidator) ValidateCustomRules(node ast.Expression) error {
+	if f.rules == nil {
+		return nil
+	}
+	return f.rules(node)
+}
+
+// staticLookup returns a GetFieldConfig implementation backed by testFields.
+func staticLookup() func(string) (FieldConfig, bool) {
+	index := make(map[string]FieldConfig, len(testFields))
+	for _, f := range testFields {
+		index[f.Name] = f
+	}
+	return func(name string) (FieldConfig, bool) {
+		cfg, ok := index[name]
+		return cfg, ok
+	}
+}
+
+func TestValidate_CustomValidator_TenantFieldAccess(t *testing.T) {
+	// Scenario: tenant A can query "total", tenant B cannot. Rule is
+	// enforced via GetFieldConfig override returning (_, false) for blocked
+	// fields, even though they are declared in the static config.
+	blocked := map[string]bool{"total": true, "year": true}
+	tenant := &fakeAstValidator{
+		lookup: func(name string) (FieldConfig, bool) {
+			if blocked[name] {
+				return FieldConfig{}, false
+			}
+			return staticLookup()(name)
+		},
+	}
+
+	tests := []struct {
+		name    string
+		query   string
+		wantErr bool
+	}{
+		{"allowed field permitted", "state=draft", false},
+		{"blocked field rejected", "total>50000", true},
+		{"blocked field in conjunction", "state=draft AND total>50000", true},
+		{"allowed-only disjunction passes", "state=draft OR name=jane", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := parser.Parse(tt.query, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			v := New(testFields, WithCustomValidator(tenant))
+			err = v.Validate(expr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("wantErr=%v, got %v", tt.wantErr, err)
+			}
+			if tt.wantErr {
+				var el ErrorList
+				if !errors.As(err, &el) {
+					t.Fatalf("expected ErrorList, got %T", err)
+				}
+				if el[0].Kind != ErrFieldNotFound {
+					t.Errorf("expected ErrFieldNotFound, got %v", el[0].Kind)
+				}
+			}
+		})
+	}
+}
+
+func TestValidate_CustomValidator_MutuallyExclusiveFields(t *testing.T) {
+	// Rule: active=false AND deleted_at IS NULL (proxy here: active=false
+	// cannot combine with state=draft). Demonstrates ValidateCustomRules
+	// walking the AST with ast.Walk.
+	rules := func(node ast.Expression) error {
+		var hasInactive, hasDraft bool
+		ast.Walk(node, func(e ast.Expression) bool {
+			q, ok := e.(*ast.QualifierExpr)
+			if !ok {
+				return true
+			}
+			switch q.Field.String() {
+			case "active":
+				if q.Value.Type == ast.ValueBoolean && !q.Value.Bool {
+					hasInactive = true
+				}
+			case "state":
+				if q.Value.Type == ast.ValueString && q.Value.Str == "draft" {
+					hasDraft = true
+				}
+			}
+			return true
+		})
+		if hasInactive && hasDraft {
+			return &Error{
+				Message:  "active=false cannot combine with state=draft",
+				Position: node.Pos(),
+				Kind:     ErrCustomRule,
+			}
+		}
+		return nil
+	}
+
+	tests := []struct {
+		name    string
+		query   string
+		wantErr bool
+	}{
+		{"inactive alone", "active=false", false},
+		{"draft alone", "state=draft", false},
+		{"forbidden combination", "active=false AND state=draft", true},
+		{"forbidden combination reversed", "state=draft AND active=false", true},
+		{"inactive with other state", "active=false AND state=issued", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := parser.Parse(tt.query, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			v := New(testFields, WithCustomValidator(&fakeAstValidator{
+				lookup: staticLookup(),
+				rules:  rules,
+			}))
+			err = v.Validate(expr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("wantErr=%v, got %v", tt.wantErr, err)
+			}
+			if tt.wantErr {
+				var el ErrorList
+				if !errors.As(err, &el) {
+					t.Fatalf("expected ErrorList, got %T", err)
+				}
+				if el[len(el)-1].Kind != ErrCustomRule {
+					t.Errorf("expected last error to be ErrCustomRule, got %v", el[len(el)-1].Kind)
+				}
+			}
+		})
+	}
+}
+
+func TestValidate_CustomValidator_ValueRange(t *testing.T) {
+	// Rule: "total" must be positive. Returns a plain error so we also
+	// exercise the wrapping path in appendCustomErr.
+	rules := func(node ast.Expression) error {
+		var errs ErrorList
+		ast.Walk(node, func(e ast.Expression) bool {
+			q, ok := e.(*ast.QualifierExpr)
+			if !ok || q.Field.String() != "total" {
+				return true
+			}
+			var n float64
+			switch q.Value.Type { //nolint:exhaustive // only numeric
+			case ast.ValueInteger:
+				n = float64(q.Value.Int)
+			case ast.ValueFloat:
+				n = q.Value.Float
+			default:
+				return true
+			}
+			if n < 0 {
+				errs = append(errs, &Error{
+					Message:  fmt.Sprintf("total must be positive, got %v", q.Value.Any()),
+					Position: q.Position,
+					Kind:     ErrCustomRule,
+				})
+			}
+			return true
+		})
+		if len(errs) == 0 {
+			return nil
+		}
+		return errs
+	}
+
+	tests := []struct {
+		name    string
+		query   string
+		wantErr bool
+	}{
+		{"positive passes", "total>50000", false},
+		{"zero is allowed", "total>=0", false},
+		{"negative rejected", "total<-1", true},
+		{"negative in conjunction", "state=draft AND total<-1", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := parser.Parse(tt.query, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			v := New(testFields, WithCustomValidator(&fakeAstValidator{
+				lookup: staticLookup(),
+				rules:  rules,
+			}))
+			err = v.Validate(expr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("wantErr=%v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestValidate_CustomValidator_WrapsPlainError(t *testing.T) {
+	// When ValidateCustomRules returns a non-structured error, the
+	// validator wraps it as a single ErrCustomRule entry at the root.
+	cv := &fakeAstValidator{
+		lookup: staticLookup(),
+		rules:  func(_ ast.Expression) error { return errors.New("boom") },
+	}
+	expr, _ := parser.Parse("state=draft", 0)
+	v := New(testFields, WithCustomValidator(cv))
+	err := v.Validate(expr)
+	var el ErrorList
+	if !errors.As(err, &el) {
+		t.Fatalf("expected ErrorList, got %T", err)
+	}
+	if len(el) != 1 {
+		t.Fatalf("expected 1 error, got %d", len(el))
+	}
+	if el[0].Kind != ErrCustomRule {
+		t.Errorf("expected ErrCustomRule, got %v", el[0].Kind)
+	}
+	if el[0].Message != "boom" {
+		t.Errorf("expected message %q, got %q", "boom", el[0].Message)
+	}
+}
+
+func TestValidate_CustomValidator_CollectsAlongsideBuiltins(t *testing.T) {
+	// Built-in errors (unknown field) and custom errors coexist in the
+	// same ErrorList.
+	cv := &fakeAstValidator{
+		lookup: staticLookup(),
+		rules:  func(_ ast.Expression) error { return errors.New("policy violation") },
+	}
+	expr, _ := parser.Parse("nonexistent=value", 0)
+	v := New(testFields, WithCustomValidator(cv))
+	err := v.Validate(expr)
+	var el ErrorList
+	if !errors.As(err, &el) {
+		t.Fatalf("expected ErrorList, got %T", err)
+	}
+	if len(el) < 2 {
+		t.Fatalf("expected at least 2 errors, got %d: %v", len(el), el)
+	}
+	var kinds []ErrorKind
+	for _, e := range el {
+		kinds = append(kinds, e.Kind)
+	}
+	var hasFieldNotFound, hasCustom bool
+	for _, k := range kinds {
+		if k == ErrFieldNotFound {
+			hasFieldNotFound = true
+		}
+		if k == ErrCustomRule {
+			hasCustom = true
+		}
+	}
+	if !hasFieldNotFound || !hasCustom {
+		t.Errorf("expected both ErrFieldNotFound and ErrCustomRule, got %v", kinds)
+	}
+}
+
+func TestValidate_CustomValidator_OverridesStaticConfig(t *testing.T) {
+	// If the static config declares a field but the custom validator's
+	// GetFieldConfig returns (_, false), the field must be treated as
+	// unknown. This is override semantics.
+	cv := &fakeAstValidator{
+		lookup: func(_ string) (FieldConfig, bool) { return FieldConfig{}, false },
+	}
+	expr, _ := parser.Parse("state=draft", 0)
+	v := New(testFields, WithCustomValidator(cv))
+	err := v.Validate(expr)
+	if err == nil {
+		t.Fatal("expected error — custom validator should override static config")
+	}
+}
+
+func TestValidate_CustomValidator_NestedFieldOverride(t *testing.T) {
+	// When the static config declares a nested field (labels.*), the
+	// custom validator can allow its subpaths by returning the nested
+	// config for the top-level segment.
+	nestedLookup := func(name string) (FieldConfig, bool) {
+		if name == "labels" {
+			return FieldConfig{Name: "labels", Type: TypeText, AllowedOps: TextOps, Nested: true}, true
+		}
+		return FieldConfig{}, false
+	}
+	cv := &fakeAstValidator{lookup: nestedLookup}
+	expr, _ := parser.Parse("labels.env=prod", 0)
+	v := New(testFields, WithCustomValidator(cv))
+	if err := v.Validate(expr); err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

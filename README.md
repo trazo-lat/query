@@ -180,6 +180,61 @@ prog, err := eval.Compile(q, fields,
 )
 ```
 
+## Custom Validation Rules
+
+For rules beyond field/type/op checks (per-tenant access, cross-field
+constraints, value ranges), implement `validate.AstValidator` and install it
+via `eval.WithCustomValidator` (or `validate.WithCustomValidator` if you are
+using the `validate` package directly):
+
+```go
+type tenantValidator struct {
+    tenantID string
+    fields   map[string]validate.FieldConfig
+    denied   map[string]bool
+}
+
+// GetFieldConfig overrides the static config. Returning (_, false) marks
+// the field as unknown — even if declared statically. Use this for
+// per-tenant field allow/denylists.
+func (t *tenantValidator) GetFieldConfig(name string) (validate.FieldConfig, bool) {
+    if t.denied[name] {
+        return validate.FieldConfig{}, false
+    }
+    cfg, ok := t.fields[name]
+    return cfg, ok
+}
+
+// ValidateCustomRules runs once on the root after built-in checks.
+// Walk the AST to implement cross-field rules, value ranges, etc.
+func (t *tenantValidator) ValidateCustomRules(node ast.Expression) error {
+    var start, end *ast.QualifierExpr
+    ast.Walk(node, func(e ast.Expression) bool {
+        if q, ok := e.(*ast.QualifierExpr); ok {
+            switch q.Field.String() {
+            case "start_date": start = q
+            case "end_date":   end = q
+            }
+        }
+        return true
+    })
+    if start != nil && end != nil && !start.Value.Date.Before(end.Value.Date) {
+        return fmt.Errorf("start_date must be before end_date")
+    }
+    return nil
+}
+
+prog, err := eval.Compile(q, fields, eval.WithCustomValidator(&tenantValidator{...}))
+```
+
+Errors returned from `ValidateCustomRules` are merged into the validator's
+`ErrorList` alongside built-in errors. Returning a `*validate.Error` or
+`validate.ErrorList` preserves positions and kinds; any other error is wrapped
+as `ErrCustomRule` anchored at the root position.
+
+See [`examples/customvalidator/`](examples/customvalidator/) for a complete
+runnable example covering all three use cases.
+
 ## Code Generation via Visitor
 
 Implement `ast.Visitor[T]` to transform the AST into any target:
@@ -321,6 +376,7 @@ go run ./examples/filter
 go run ./examples/functions
 go run ./examples/struct
 go run ./examples/restrictions
+go run ./examples/customvalidator
 ```
 
 ## License

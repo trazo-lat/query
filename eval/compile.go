@@ -53,7 +53,11 @@ func Compile(q string, fields []validate.FieldConfig, opts ...Option) (*Program,
 	}
 
 	// Validate (skip validation for function-call-only expressions)
-	v := validate.New(activeFields)
+	var vopts []validate.Option
+	if o.customVal != nil {
+		vopts = append(vopts, validate.WithCustomValidator(o.customVal))
+	}
+	v := validate.New(activeFields, vopts...)
 	if err := v.Validate(expr); err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
 	}
