@@ -60,10 +60,10 @@ func (p *parser) parseLogicalOr() ast.Expression {
 }
 
 func (p *parser) parseLogicalAnd() ast.Expression {
-	left := p.parseTerm()
+	left := p.parseChainExpr()
 	for p.peek().Type == token.And {
 		op := p.advance()
-		right := p.parseTerm()
+		right := p.parseChainExpr()
 		if right == nil {
 			break
 		}
@@ -77,10 +77,60 @@ func (p *parser) parseLogicalAnd() ast.Expression {
 	return left
 }
 
+// parseChainExpr parses a term optionally followed by one or more selector
+// expressions: `term ( '@' ( 'first' | 'last' | '(' expression ')' ) )*`.
+func (p *parser) parseChainExpr() ast.Expression {
+	expr := p.parseTerm()
+	for expr != nil && p.peek().Type == token.At {
+		at := p.advance()
+		sel := p.parseSelector(expr, at.Pos)
+		if sel == nil {
+			return nil
+		}
+		expr = sel
+	}
+	return expr
+}
+
+// parseSelector parses the portion after an '@' token:
+// `first`, `last`, or `(expression)`.
+func (p *parser) parseSelector(base ast.Expression, pos token.Position) ast.Expression {
+	next := p.peek()
+	switch {
+	case next.Type == token.Ident && (next.Value == "first" || next.Value == "last"):
+		p.advance()
+		return &ast.SelectorExpr{
+			Base:     base,
+			Selector: next.Value,
+			Position: pos,
+		}
+	case next.Type == token.LParen:
+		p.advance()
+		inner := p.parseExpression()
+		if p.peek().Type != token.RParen {
+			p.errors.add(newError(ErrSyntax, p.peek().Pos,
+				"expected ')' to close selector expression, got %s", p.peek()))
+			return nil
+		}
+		p.advance()
+		return &ast.SelectorExpr{
+			Base:     base,
+			Inner:    inner,
+			Position: pos,
+		}
+	default:
+		p.errors.add(newError(ErrUnexpectedToken, next.Pos,
+			"expected 'first', 'last', or '(' after '@', got %s", next))
+		return nil
+	}
+}
+
 func (p *parser) parseTerm() ast.Expression {
 	if p.peek().Type == token.Not {
 		op := p.advance()
-		expr := p.parseTerm()
+		// Use parseChainExpr so selectors bind tighter than NOT:
+		//   NOT items@(x=y) → NOT (items@(x=y))
+		expr := p.parseChainExpr()
 		if expr == nil {
 			return nil
 		}

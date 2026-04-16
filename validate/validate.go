@@ -106,10 +106,7 @@ func (v *Validator) validate(expr ast.Expression) {
 	case *ast.GroupExpr:
 		v.validate(e.Expr)
 	case *ast.SelectorExpr:
-		v.validate(e.Base)
-		if e.Inner != nil {
-			v.validate(e.Inner)
-		}
+		v.validateSelector(e)
 	case *ast.FuncCallExpr:
 		v.validateFuncCallFields(e)
 	case *ast.QualifierExpr:
@@ -163,6 +160,26 @@ func (v *Validator) validateFuncCallFields(fc *ast.FuncCallExpr) {
 		if arg.Call != nil {
 			v.validateFuncCallFields(arg.Call)
 		}
+	}
+}
+
+// validateSelector checks that the selector's base field is declared and
+// recurses into the inner expression. The base acts as a list reference, so
+// we only require the field to exist — OpPresence is not required.
+func (v *Validator) validateSelector(s *ast.SelectorExpr) {
+	switch b := s.Base.(type) {
+	case *ast.PresenceExpr:
+		fieldName := b.Field.String()
+		if _, ok := v.resolveField(fieldName); !ok {
+			v.addError(ErrFieldNotFound, b.Position, "unknown field %q", fieldName)
+		}
+	case *ast.QualifierExpr:
+		v.validateQualifier(b)
+	default:
+		v.validate(s.Base)
+	}
+	if s.Inner != nil {
+		v.validate(s.Inner)
 	}
 }
 

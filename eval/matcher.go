@@ -50,7 +50,7 @@ func compileMatcher(expr ast.Expression, funcs FuncRegistry) matcher {
 		return compileFuncCallBool(e, funcs)
 
 	case *ast.SelectorExpr:
-		return compileMatcher(e.Base, funcs)
+		return compileSelector(e, funcs)
 
 	default:
 		return func(func(string) (any, bool)) bool { return false }
