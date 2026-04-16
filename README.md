@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/trazo-lat/query/actions/workflows/ci.yml/badge.svg)](https://github.com/trazo-lat/query/actions/workflows/ci.yml)
 
-Pure Go query language library for Trazo. Handles lexing, parsing, AST construction, and validation of a unified query syntax used across all clients (CLI, Web UI, API, VS Code, WASM).
+Pure Go query language library. Handles lexing, parsing, AST construction, validation, and evaluation of a unified query syntax used across all clients (CLI, Web UI, API, VS Code, WASM).
 
-Zero external dependencies. This library is the shared baseline for query parsing and validation -- all semantic evaluation (SQL generation, execution) lives in the consumer.
+Zero external dependencies. Compiles to WebAssembly.
 
 ## Install
 
@@ -21,121 +21,24 @@ go get github.com/trazo-lat/query
 | `query/ast` | AST nodes, `Visitor[T]` pattern, `Walk`, `String` |
 | `query/parser` | Lexer and recursive descent parser |
 | `query/validate` | Field configuration and AST validation |
+| `query/eval` | Compile-and-match engine with functions and struct binding |
 
-## Usage
-
-### Parse and validate
+## Quick Start
 
 ```go
-import (
-    "github.com/trazo-lat/query"
-    "github.com/trazo-lat/query/validate"
-)
-
+// Parse
 expr, err := query.Parse("state=draft AND total>50000")
 
+// Validate
 fields := []validate.FieldConfig{
     {Name: "state", Type: validate.TypeText, AllowedOps: validate.TextOps},
     {Name: "total", Type: validate.TypeDecimal, AllowedOps: validate.NumericOps},
 }
 err = query.Validate(expr, fields)
-```
 
-### Generate SQL via Visitor
-
-Implement `ast.Visitor[T]` to transform the AST into any output format:
-
-```go
-import (
-    "github.com/trazo-lat/query/ast"
-    "github.com/trazo-lat/query/token"
-)
-
-type sqlVisitor struct {
-    params []any
-}
-
-func (v *sqlVisitor) VisitQualifier(e *ast.QualifierExpr) string {
-    field := e.Field.String()
-    if e.IsWildcard() {
-        v.params = append(v.params, ast.WildcardToLike(e.Value.Str))
-        return fmt.Sprintf("%s LIKE $%d", field, len(v.params))
-    }
-    op := ast.SQLOperator(e.Operator, false)
-    v.params = append(v.params, e.Value.Any())
-    return fmt.Sprintf("%s %s $%d", field, op, len(v.params))
-}
-
-func (v *sqlVisitor) VisitBinary(e *ast.BinaryExpr) string {
-    left := ast.Visit[string](v, e.Left)
-    right := ast.Visit[string](v, e.Right)
-    if e.Op == token.And {
-        return left + " AND " + right
-    }
-    return left + " OR " + right
-}
-// ... implement remaining methods ...
-
-// Usage:
-v := &sqlVisitor{}
-where := ast.Visit[string](v, expr)
-// where = "state = $1 AND total > $2"
-// v.params = ["draft", 50000]
-```
-
-### Generate JSON
-
-```go
-type jsonVisitor struct{}
-
-func (v *jsonVisitor) VisitQualifier(e *ast.QualifierExpr) map[string]any {
-    return map[string]any{
-        "field": e.Field.String(),
-        "op":    token.OperatorSymbol(e.Operator),
-        "value": e.Value.Any(),
-    }
-}
-// ... same pattern for other node types ...
-```
-
-### Build filter functions
-
-```go
-type filterVisitor struct{}
-
-func (v *filterVisitor) VisitQualifier(e *ast.QualifierExpr) func(map[string]any) bool {
-    field := e.Field.String()
-    expected := e.Value.Any()
-    return func(obj map[string]any) bool {
-        return fmt.Sprint(obj[field]) == fmt.Sprint(expected)
-    }
-}
-// ... build composable predicate functions ...
-```
-
-### Inspect the AST
-
-```go
-// List all fields referenced in a query
-fields := ast.Fields(expr) // []ast.FieldPath
-
-// Extract all field=value comparisons
-quals := ast.Qualifiers(expr) // []*ast.QualifierExpr
-
-// Check if it's a single condition (no AND/OR)
-simple := ast.IsSimple(expr) // bool
-
-// Measure nesting depth
-depth := ast.Depth(expr) // int
-
-// Walk the tree with custom logic
-ast.Walk(expr, func(e ast.Expression) bool {
-    // process each node
-    return true // return false to skip children
-})
-
-// Round-trip back to query string
-str := ast.String(expr) // "state=draft AND total>50000"
+// Or compile and evaluate in one shot
+prog, err := eval.Compile("state=draft AND total>50000", fields)
+prog.Match(map[string]any{"state": "draft", "total": 60000}) // true
 ```
 
 ## Query Syntax
@@ -143,7 +46,7 @@ str := ast.String(expr) // "state=draft AND total>50000"
 ```
 state=draft                                        # equality
 state!=cancelled                                   # not equal
-year>2020                                          # comparison
+year>2020                                          # comparison (>, >=, <, <=)
 name=John*                                         # wildcard (prefix, suffix, contains)
 tire_size                                          # presence check
 state=draft AND customer_id=customer_john-doe      # logical AND
@@ -152,6 +55,165 @@ NOT state=cancelled                                # negation
 created_at:2026-01-01..2026-03-31                  # date range
 ttl.duration>1d                                    # duration comparison
 labels.dev=jane                                    # nested field access
+lower(name)=john*                                  # function call as field transform
+len(name)>5                                        # function in comparison
+contains(tags, category)                           # function as boolean predicate
+```
+
+## Compile and Evaluate
+
+The `eval` package compiles a query into an executable program:
+
+```go
+import "github.com/trazo-lat/query/eval"
+
+prog, err := eval.Compile("state=draft AND total>50000", fields)
+
+// Match against a map
+prog.Match(map[string]any{"state": "draft", "total": 60000}) // true
+
+// Match with a custom accessor
+prog.MatchFunc(func(field string) (any, bool) {
+    return myRecord.Get(field)
+})
+
+// Inspect
+prog.Fields()    // []ast.FieldPath{["state"], ["total"]}
+prog.Stringify() // "state=draft AND total>50000"
+prog.AST()       // ast.Expression
+```
+
+## Struct Binding
+
+Compile against Go structs for type-safe evaluation:
+
+```go
+type Invoice struct {
+    State     string    `query:"state"`
+    Total     float64   `query:"total"`
+    CreatedAt time.Time `query:"created_at"`
+    Internal  string    // no tag = not queryable
+}
+
+prog, err := eval.CompileFor[Invoice]("state=draft AND total>50000")
+prog.MatchStruct(Invoice{State: "draft", Total: 60000}) // true
+
+// Type mismatches caught at compile time:
+_, err = eval.CompileFor[Invoice]("total=notanumber") // error: type mismatch
+_, err = eval.CompileFor[Invoice]("Internal=secret")  // error: unknown field
+```
+
+## Built-in Functions
+
+Functions can transform fields or act as boolean predicates:
+
+```go
+// String functions
+lower(name)=john*         // case-insensitive match
+upper(name)=JOHN          // uppercase transform
+trim(description)=hello   // strip whitespace
+len(name)>5               // string length
+
+// String predicates (two field references)
+contains(name, tags)      // field value contains other field's value
+startsWith(name, prefix)  // prefix check
+endsWith(name, suffix)    // suffix check
+
+// Date functions
+year(created_at)=2026     // extract year
+month(created_at)=3       // extract month
+day(created_at)=15        // extract day
+
+// Date generators
+// (use in eval context)
+now()                     // current timestamp
+today()                   // midnight today
+daysAgo(7)                // 7 days ago
+```
+
+## Custom Functions
+
+Register domain-specific functions:
+
+```go
+prog, err := eval.Compile("wordCount(description)>3", fields,
+    eval.WithFunctions(eval.Func{
+        Name: "wordCount",
+        Call: func(args ...any) (any, error) {
+            s := strings.TrimSpace(fmt.Sprint(args[0]))
+            return int64(len(strings.Fields(s))), nil
+        },
+    }),
+)
+```
+
+Disable built-ins if you want full control:
+
+```go
+prog, err := eval.Compile(q, fields,
+    eval.WithNoBuiltins(),
+    eval.WithFunctions(myFunc1, myFunc2),
+)
+```
+
+## Query Restrictions
+
+Sandbox queries for different user roles or API contexts:
+
+```go
+// Public API: only allow specific fields
+prog, err := eval.Compile(q, fields,
+    eval.WithAllowedFields("state", "total", "year"),
+)
+
+// Read-only: only equality checks
+prog, err := eval.Compile(q, fields,
+    eval.WithAllowedOps(validate.OpEq, validate.OpNeq),
+)
+
+// DoS protection: limit nesting depth and query length
+prog, err := eval.Compile(q, fields,
+    eval.WithMaxDepth(3),
+    eval.WithMaxLength(256),
+)
+```
+
+## Code Generation via Visitor
+
+Implement `ast.Visitor[T]` to transform the AST into any target:
+
+```go
+type sqlVisitor struct{ params []any }
+
+func (v *sqlVisitor) VisitBinary(e *ast.BinaryExpr) string {
+    left := ast.Visit[string](v, e.Left)
+    right := ast.Visit[string](v, e.Right)
+    if e.Op == token.And { return left + " AND " + right }
+    return left + " OR " + right
+}
+
+func (v *sqlVisitor) VisitQualifier(e *ast.QualifierExpr) string {
+    v.params = append(v.params, e.Value.Any())
+    return fmt.Sprintf("%s %s $%d", e.Field, ast.SQLOperator(e.Operator, false), len(v.params))
+}
+// ... implement remaining 5 methods ...
+
+v := &sqlVisitor{}
+where := ast.Visit[string](v, expr)
+// "state = $1 AND total > $2", params: ["draft", 50000]
+```
+
+See [`examples/`](examples/) for complete implementations of SQL, JSON, filter function, and struct binding visitors.
+
+## AST Utilities
+
+```go
+ast.Fields(expr)      // []FieldPath — all referenced fields
+ast.Qualifiers(expr)  // []*QualifierExpr — all field=value pairs
+ast.IsSimple(expr)    // bool — single condition (no AND/OR)?
+ast.Depth(expr)       // int — max nesting depth
+ast.Walk(expr, fn)    // depth-first traversal
+ast.String(expr)      // round-trip back to query string
 ```
 
 ## Operators
@@ -165,6 +227,72 @@ labels.dev=jane                                    # nested field access
 | `NOT` | expression | Boolean negation |
 | `AND` | expressions | Logical AND (higher precedence than OR) |
 | `OR` | expressions | Logical OR |
+
+## Strengths
+
+- **URL-native syntax** — `state=draft AND total>50000` works directly in `?q=` params. No quotes, no `==`, no `&&`.
+- **Zero dependencies** — stdlib only. Compiles to WASM without issues.
+- **Compile-time type safety** — `CompileFor[T]` catches field name typos and type mismatches before any data is evaluated.
+- **Multi-target code generation** — one AST, many outputs. The `Visitor[T]` pattern makes it trivial to generate SQL, JSON, React components, or filter functions.
+- **Query sandboxing** — `WithAllowedFields`, `WithAllowedOps`, `WithMaxDepth` let you expose different query capabilities to different user roles.
+- **Built-in + custom functions** — `lower()`, `year()`, `len()` out of the box; register your own with `WithFunctions`.
+- **Rich value types** — native support for dates (`2026-01-01`), durations (`1d`, `4h`), wildcards (`John*`), and ranges (`field:start..end`).
+- **Struct binding** — `query:"field_name"` tags on Go structs auto-generate field configs.
+- **Round-trip fidelity** — `ast.String(ast.Parse(q)) == q` for all normalized queries.
+- **TypeScript package** — full type definitions, visitor pattern, and WASM loader for browser/Node.js.
+
+## Limitations
+
+These are known limitations that we plan to address in future versions:
+
+- **No string literals in function args** — function arguments are parsed as field references, not quoted strings. `contains(name, "urgent")` won't work; use wildcard `name=*urgent*` or pass both as field refs: `contains(name, search_term)`.
+- **No functions in value position** — `created_at>=now()` is not yet supported. Compute dynamic values before compiling, or use `daysAgo()` as a field transform workaround.
+- **No arithmetic** — `total>50000*1.1` is not supported. Register a custom function for computed comparisons.
+- **No implicit AND** — `state=draft total>50000` requires explicit `AND`. Some query languages allow space as implicit AND.
+- **No quoted strings** — values are unquoted and terminated by whitespace or `)`. Values containing spaces are not directly expressible.
+- **No OR shorthand** — `state=(draft,issued)` or `state IN (draft,issued)` is not supported. Use `state=draft OR state=issued`.
+- **Case-sensitive keywords** — `AND`, `OR`, `NOT` must be uppercase. `and`, `or`, `not` are treated as identifiers.
+- **No negated comparisons** — `NOT total>50000` works, but `total!>50000` does not exist.
+- **Closure-based eval** — the eval engine compiles to closure trees, not bytecode. For hot-path evaluation of millions of records, a bytecode compiler would be faster.
+- **Reflect in struct binding** — `CompileFor[T]` and `StructAccessor` use reflection. This is fine for compile-time setup but adds overhead if called per-record. Compile once, match many.
+
+## Comparison with expr-lang/expr
+
+| Feature | query | expr-lang/expr |
+|---------|-------|---------------|
+| **Use case** | Search bars, URL params, API filters | Business rules, computed fields, templates |
+| **Syntax** | `state=draft AND total>50000` | `state == "draft" && total > 50000` |
+| **URL-safe** | Yes (no quotes, no special chars) | No (requires URL encoding) |
+| **Wildcards** | `name=John*` native | Regex or custom function |
+| **Ranges** | `created_at:2026-01-01..2026-03-31` | Manual `>=` and `<=` |
+| **Presence** | `tire_size` | `tire_size != nil` |
+| **Field validation** | Per-field type + operator config | Struct-based type checking |
+| **Code generation** | `Visitor[T]` for SQL/JSON/React/etc. | Not designed for this |
+| **Dependencies** | Zero (stdlib only) | reflect, unsafe, internal |
+| **WASM** | First-class target | Possible but heavy |
+| **Functions** | Built-in + custom registry | Rich expression language |
+| **Arithmetic** | Not supported | Full arithmetic |
+| **String operations** | Via functions (`lower`, `len`) | Native (`+`, `contains`, etc.) |
+| **Ternary/nullish** | Not supported | `?:`, `??` |
+| **Array operations** | Not supported | `map`, `filter`, `all`, `any` |
+| **Maturity** | New | Battle-tested, years of production |
+
+**Choose this library** when you need a search/filter language for end users (search bars, `?q=` params, API filters) with multi-target code generation and query sandboxing.
+
+**Choose expr-lang** when you need a general-purpose expression engine for business rules, computed fields, or template evaluation where the full power of arithmetic, arrays, and ternary operators matters.
+
+## Examples
+
+See the [`examples/`](examples/) directory for runnable programs:
+
+```bash
+go run ./examples/sql "state=draft AND total>50000"
+go run ./examples/json "(state=draft OR state=issued) AND total>50000"
+go run ./examples/filter
+go run ./examples/functions
+go run ./examples/struct
+go run ./examples/restrictions
+```
 
 ## License
 
