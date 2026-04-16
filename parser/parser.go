@@ -1,25 +1,32 @@
-package query
+package parser
 
 import (
 	"strconv"
 	"time"
+
+	"github.com/trazo-lat/query/ast"
+	"github.com/trazo-lat/query/token"
 )
 
 // parser builds an AST from a token stream using recursive descent.
 type parser struct {
-	tokens []Token
+	tokens []token.Token
 	pos    int
 	errors ErrorList
 }
 
-// parse converts a token stream into an AST.
-func parse(tokens []Token) (Expression, error) {
+// Parse lexes and parses a query string into an AST.
+func Parse(input string, maxLength int) (ast.Expression, error) {
+	tokens, err := Lex(input, maxLength)
+	if err != nil {
+		return nil, err
+	}
 	p := &parser{tokens: tokens}
 	expr := p.parseExpression()
 	if err := p.errors.errOrNil(); err != nil {
 		return nil, err
 	}
-	if p.peek().Type != TokenEOF {
+	if p.peek().Type != token.EOF {
 		tok := p.peek()
 		p.errors.add(newError(ErrUnexpectedToken, tok.Pos,
 			"unexpected token %s, expected end of query", tok))
@@ -30,21 +37,20 @@ func parse(tokens []Token) (Expression, error) {
 	return expr, nil
 }
 
-func (p *parser) parseExpression() Expression {
+func (p *parser) parseExpression() ast.Expression {
 	return p.parseLogicalOr()
 }
 
-// parseLogicalOr handles: logical_and { "OR" logical_and }
-func (p *parser) parseLogicalOr() Expression {
+func (p *parser) parseLogicalOr() ast.Expression {
 	left := p.parseLogicalAnd()
-	for p.peek().Type == TokenOr {
+	for p.peek().Type == token.Or {
 		op := p.advance()
 		right := p.parseLogicalAnd()
 		if right == nil {
 			break
 		}
-		left = &BinaryExpr{
-			Op:       TokenOr,
+		left = &ast.BinaryExpr{
+			Op:       token.Or,
 			Left:     left,
 			Right:    right,
 			Position: op.Pos,
@@ -53,17 +59,16 @@ func (p *parser) parseLogicalOr() Expression {
 	return left
 }
 
-// parseLogicalAnd handles: term { "AND" term }
-func (p *parser) parseLogicalAnd() Expression {
+func (p *parser) parseLogicalAnd() ast.Expression {
 	left := p.parseTerm()
-	for p.peek().Type == TokenAnd {
+	for p.peek().Type == token.And {
 		op := p.advance()
 		right := p.parseTerm()
 		if right == nil {
 			break
 		}
-		left = &BinaryExpr{
-			Op:       TokenAnd,
+		left = &ast.BinaryExpr{
+			Op:       token.And,
 			Left:     left,
 			Right:    right,
 			Position: op.Pos,
@@ -72,178 +77,157 @@ func (p *parser) parseLogicalAnd() Expression {
 	return left
 }
 
-// parseTerm handles: [ "NOT" ] ( qualifier | "(" expression ")" )
-func (p *parser) parseTerm() Expression {
-	// Handle NOT prefix
-	if p.peek().Type == TokenNot {
+func (p *parser) parseTerm() ast.Expression {
+	if p.peek().Type == token.Not {
 		op := p.advance()
 		expr := p.parseTerm()
 		if expr == nil {
 			return nil
 		}
-		return &UnaryExpr{
-			Op:       TokenNot,
+		return &ast.UnaryExpr{
+			Op:       token.Not,
 			Expr:     expr,
 			Position: op.Pos,
 		}
 	}
-
-	// Handle parenthesized group
-	if p.peek().Type == TokenLParen {
+	if p.peek().Type == token.LParen {
 		open := p.advance()
 		expr := p.parseExpression()
-		if p.peek().Type != TokenRParen {
+		if p.peek().Type != token.RParen {
 			p.errors.add(newError(ErrSyntax, p.peek().Pos, "expected ')', got %s", p.peek()))
 			return expr
 		}
-		p.advance() // consume ')'
-		return &GroupExpr{
+		p.advance()
+		return &ast.GroupExpr{
 			Expr:     expr,
 			Position: open.Pos,
 		}
 	}
-
 	return p.parseQualifier()
 }
 
-// parseQualifier handles: field_name [ operator value ] with optional range syntax.
-func (p *parser) parseQualifier() Expression {
-	if p.peek().Type != TokenIdent {
+func (p *parser) parseQualifier() ast.Expression {
+	if p.peek().Type != token.Ident {
 		tok := p.peek()
-		if tok.Type == TokenEOF {
+		if tok.Type == token.EOF {
 			p.errors.add(newError(ErrUnexpectedEOF, tok.Pos, "unexpected end of query, expected field name"))
 		} else {
-			p.errors.add(newError(ErrUnexpectedToken, tok.Pos,
-				"expected field name, got %s", tok))
+			p.errors.add(newError(ErrUnexpectedToken, tok.Pos, "expected field name, got %s", tok))
 		}
 		return nil
 	}
 
 	startPos := p.peek().Pos
 	field := p.parseFieldName()
-
-	// Check for operator
 	tok := p.peek()
 
-	// Range syntax: field:value..value
-	if tok.Type == TokenColon {
-		p.advance() // consume ':'
+	if tok.Type == token.Colon {
+		p.advance()
 		return p.parseRangeExpr(field, startPos)
 	}
-
-	// Standard comparison operators
 	if tok.Type.IsOperator() {
-		p.advance() // consume operator
+		p.advance()
 		val := p.parseValue()
 		if val == nil {
 			return nil
 		}
-		return &QualifierExpr{
+		return &ast.QualifierExpr{
 			Field:    field,
 			Operator: tok.Type,
 			Value:    *val,
 			Position: startPos,
 		}
 	}
-
-	// No operator — presence check
-	return &PresenceExpr{
+	return &ast.PresenceExpr{
 		Field:    field,
 		Position: startPos,
 	}
 }
 
-// parseRangeExpr handles: value ".." value (after the colon was consumed).
-func (p *parser) parseRangeExpr(field FieldPath, startPos Position) Expression {
+func (p *parser) parseRangeExpr(field ast.FieldPath, startPos token.Position) ast.Expression {
 	startVal := p.parseValue()
 	if startVal == nil {
 		return nil
 	}
-
-	if p.peek().Type != TokenRange {
+	if p.peek().Type != token.Range {
 		p.errors.add(newError(ErrSyntax, p.peek().Pos,
 			"expected '..' in range expression, got %s", p.peek()))
 		return nil
 	}
-	p.advance() // consume '..'
-
+	p.advance()
 	endVal := p.parseValue()
 	if endVal == nil {
 		return nil
 	}
-
-	return &QualifierExpr{
+	return &ast.QualifierExpr{
 		Field:    field,
-		Operator: TokenRange,
+		Operator: token.Range,
 		Value:    *startVal,
 		EndValue: endVal,
 		Position: startPos,
 	}
 }
 
-// parseFieldName handles: identifier { "." identifier }
-func (p *parser) parseFieldName() FieldPath {
+func (p *parser) parseFieldName() ast.FieldPath {
 	var parts []string
 	parts = append(parts, p.advance().Value)
-
-	for p.peek().Type == TokenDot {
-		p.advance() // consume '.'
-		if p.peek().Type != TokenIdent {
+	for p.peek().Type == token.Dot {
+		p.advance()
+		if p.peek().Type != token.Ident {
 			p.errors.add(newError(ErrSyntax, p.peek().Pos,
 				"expected field name after '.', got %s", p.peek()))
 			break
 		}
 		parts = append(parts, p.advance().Value)
 	}
-	return FieldPath(parts)
+	return ast.FieldPath(parts)
 }
 
-// parseValue reads the next value token and converts it to a typed Value.
-func (p *parser) parseValue() *Value {
+func (p *parser) parseValue() *ast.Value {
 	tok := p.peek()
 	switch tok.Type {
-	case TokenString:
+	case token.String:
 		p.advance()
-		return &Value{Type: ValueString, Raw: tok.Value, Str: tok.Value}
-	case TokenInteger:
+		return &ast.Value{Type: ast.ValueString, Raw: tok.Value, Str: tok.Value}
+	case token.Integer:
 		p.advance()
 		n, err := strconv.ParseInt(tok.Value, 10, 64)
 		if err != nil {
 			p.errors.add(newError(ErrInvalidValue, tok.Pos, "invalid integer %q", tok.Value))
 			return nil
 		}
-		return &Value{Type: ValueInteger, Raw: tok.Value, Int: n}
-	case TokenFloat:
+		return &ast.Value{Type: ast.ValueInteger, Raw: tok.Value, Int: n}
+	case token.Float:
 		p.advance()
 		f, err := strconv.ParseFloat(tok.Value, 64)
 		if err != nil {
 			p.errors.add(newError(ErrInvalidValue, tok.Pos, "invalid float %q", tok.Value))
 			return nil
 		}
-		return &Value{Type: ValueFloat, Raw: tok.Value, Float: f}
-	case TokenBoolean:
+		return &ast.Value{Type: ast.ValueFloat, Raw: tok.Value, Float: f}
+	case token.Boolean:
 		p.advance()
-		return &Value{Type: ValueBoolean, Raw: tok.Value, Bool: tok.Value == "true"}
-	case TokenDate:
+		return &ast.Value{Type: ast.ValueBoolean, Raw: tok.Value, Bool: tok.Value == "true"}
+	case token.Date:
 		p.advance()
 		d, err := time.Parse("2006-01-02", tok.Value)
 		if err != nil {
 			p.errors.add(newError(ErrInvalidDate, tok.Pos, "invalid date %q", tok.Value))
 			return nil
 		}
-		return &Value{Type: ValueDate, Raw: tok.Value, Date: d}
-	case TokenDuration:
+		return &ast.Value{Type: ast.ValueDate, Raw: tok.Value, Date: d}
+	case token.Duration:
 		p.advance()
-		dur, err := parseDuration(tok.Value)
+		dur, err := ParseDuration(tok.Value)
 		if err != nil {
 			p.errors.add(newError(ErrInvalidDuration, tok.Pos, "invalid duration %q", tok.Value))
 			return nil
 		}
-		return &Value{Type: ValueDuration, Raw: tok.Value, Duration: dur}
-	case TokenWildcard:
+		return &ast.Value{Type: ast.ValueDuration, Raw: tok.Value, Duration: dur}
+	case token.Wildcard:
 		p.advance()
-		return &Value{Type: ValueString, Raw: tok.Value, Str: tok.Value, Wildcard: true}
-	case TokenEOF:
+		return &ast.Value{Type: ast.ValueString, Raw: tok.Value, Str: tok.Value, Wildcard: true}
+	case token.EOF:
 		p.errors.add(newError(ErrUnexpectedEOF, tok.Pos, "expected value, got end of query"))
 		return nil
 	default:
@@ -253,14 +237,14 @@ func (p *parser) parseValue() *Value {
 	}
 }
 
-func (p *parser) peek() Token {
+func (p *parser) peek() token.Token {
 	if p.pos >= len(p.tokens) {
-		return Token{Type: TokenEOF, Pos: Position{Offset: 0}}
+		return token.Token{Type: token.EOF}
 	}
 	return p.tokens[p.pos]
 }
 
-func (p *parser) advance() Token {
+func (p *parser) advance() token.Token {
 	tok := p.peek()
 	if p.pos < len(p.tokens) {
 		p.pos++

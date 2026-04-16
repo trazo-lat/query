@@ -1,5 +1,11 @@
 package query
 
+import (
+	"github.com/trazo-lat/query/ast"
+	"github.com/trazo-lat/query/parser"
+	"github.com/trazo-lat/query/validate"
+)
+
 // DefaultMaxLength is the default maximum query string length in bytes.
 const DefaultMaxLength = 256
 
@@ -23,28 +29,23 @@ func defaultOptions() options {
 	return options{maxLength: DefaultMaxLength}
 }
 
-// Parse parses a query string into an AST.
-func Parse(q string, opts ...Option) (Expression, error) {
+// Parse parses a query string into an AST expression.
+func Parse(q string, opts ...Option) (ast.Expression, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(&o)
 	}
-
-	tokens, err := lex(q, o.maxLength)
-	if err != nil {
-		return nil, err
-	}
-	return parse(tokens)
+	return parser.Parse(q, o.maxLength)
 }
 
 // Validate validates an AST against field configurations.
-func Validate(expr Expression, fields []FieldConfig) error {
-	v := NewValidator(fields)
+func Validate(expr ast.Expression, fields []validate.FieldConfig) error {
+	v := validate.New(fields)
 	return v.Validate(expr)
 }
 
 // ParseAndValidate parses a query string and validates it against field configs.
-func ParseAndValidate(q string, fields []FieldConfig, opts ...Option) (Expression, error) {
+func ParseAndValidate(q string, fields []validate.FieldConfig, opts ...Option) (ast.Expression, error) {
 	expr, err := Parse(q, opts...)
 	if err != nil {
 		return nil, err

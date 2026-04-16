@@ -1,6 +1,10 @@
-package query
+package validate
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/trazo-lat/query/ast"
+)
 
 // FieldValueType identifies the data type of a field.
 type FieldValueType int
@@ -46,7 +50,7 @@ const (
 	OpLt       Op = "<"  // less than
 	OpLte      Op = "<=" // less than or equal
 	OpRange    Op = ".." // inclusive range
-	OpWildcard Op = "*"  // wildcard match (prefix, suffix, contains)
+	OpWildcard Op = "*"  // wildcard match
 	OpPresence Op = "?"  // field exists / has value
 )
 
@@ -67,7 +71,7 @@ var DurationOps = []Op{OpEq, OpNeq, OpGt, OpGte, OpLt, OpLte, OpRange}
 
 // FieldConfig declares the name, type, and allowed operations for a query field.
 type FieldConfig struct {
-	Name       string         // field name (supports dotted paths for nested)
+	Name       string         // field name
 	Type       FieldValueType // data type
 	AllowedOps []Op           // allowed operations
 	Searchable bool           // included in free-text search
@@ -84,9 +88,9 @@ func (f FieldConfig) AllowsOp(op Op) bool {
 	return false
 }
 
-// AstValidator is an extension point for consumers to add entity-specific
-// validation rules beyond what the generic validator checks.
+// AstValidator is an extension point for consumers to add custom validation
+// rules beyond what the generic validator checks.
 type AstValidator interface {
 	GetFieldConfig(fieldName string) (FieldConfig, bool)
-	ValidateCustomRules(node Expression) error
+	ValidateCustomRules(node ast.Expression) error
 }

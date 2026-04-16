@@ -16,24 +16,43 @@ WASM-compilable for client-side use.
 
 ```
 query/
-├── token.go           # Token types and Position
-├── lexer.go           # Lexer: string → token stream
-├── ast.go             # AST node types, Walk(), String()
-├── parser.go          # Recursive descent parser
-├── validator.go       # AST validator against FieldConfig
-├── field_config.go    # Field types, operators, config
-├── errors.go          # Structured errors with position info
-├── query.go           # Public API: Parse(), Validate()
-├── *_test.go          # Table-driven tests for each component
-└── wasm/              # WASM build target (Phase 4)
+├── doc.go              # Package-level documentation
+├── query.go            # Public API: Parse(), Validate(), ParseAndValidate()
+├── example_test.go     # Godoc examples (SQL, JSON, React, filter function)
+├── token/              # Lexical token types
+│   ├── doc.go
+│   └── token.go        # Position, Type, Token, OperatorSymbol
+├── ast/                # Abstract syntax tree
+│   ├── doc.go
+│   ├── node.go         # Expression interface, all concrete node types
+│   ├── value.go        # Value, ValueType, FieldPath
+│   ├── visitor.go      # Visitor[T] generic interface, Visit[T], SQLOperator, WildcardToLike
+│   ├── walk.go         # Walk, Fields, Qualifiers, IsSimple, Depth
+│   ├── string.go       # String() — AST back to query string
+│   └── walk_test.go
+├── parser/             # Lexer and parser
+│   ├── doc.go
+│   ├── errors.go       # Error, ErrorKind, ErrorList
+│   ├── lexer.go        # Lex(), ParseDuration()
+│   ├── lexer_test.go
+│   ├── parser.go       # Parse()
+│   └── parser_test.go
+├── validate/           # Field config and AST validation
+│   ├── doc.go
+│   ├── config.go       # FieldConfig, FieldValueType, Op, operator groups
+│   ├── validate.go     # Validator, New(), Validate()
+│   └── validate_test.go
+└── wasm/               # WASM build target (Phase 4)
+    ├── main.go
+    └── Makefile
 ```
 
 ## Architecture Decisions — DO NOT DEVIATE
 
 1. **Zero external dependencies** — stdlib only. No testify, no third-party.
-2. **Single flat package** — all types in package `query` at module root.
+2. **Sub-package structure** — token, ast, parser, validate are separate packages.
 3. **WASM-compatible** — no OS-specific code in the library.
-4. **Consumers own SQL generation** — this library only parses and validates.
+4. **Consumers own code generation** — use ast.Visitor[T] to transform AST.
 
 ## Code Conventions
 
@@ -45,15 +64,11 @@ import (
     "fmt"
     "strings"
 
-    // 2. Internal (none expected — flat package)
+    // 2. Internal packages
+    "github.com/trazo-lat/query/ast"
+    "github.com/trazo-lat/query/token"
 )
 ```
-
-### Error Handling
-
-- `QueryError` with `Position` for all parse/validation errors.
-- `ErrorList` collects multiple errors (validator does not stop at first).
-- `fmt.Errorf("doing X: %w", err)` for internal wrapping.
 
 ### Test Naming
 
@@ -69,13 +84,13 @@ import (
 ```
 
 - Types: `feat`, `fix`, `refactor`, `test`, `chore`, `docs`
-- Scopes: `lexer`, `parser`, `ast`, `validator`, `api`, `errors`, `wasm`, `ci`
+- Scopes: `token`, `ast`, `parser`, `validate`, `api`, `wasm`, `ci`
 - No `Co-authored-by` for Claude.
 
 ## Common Commands
 
 ```bash
-make build      # compile
+make build      # compile all packages
 make test       # unit tests with -race
 make lint       # golangci-lint
 make fmt        # gofmt + goimports

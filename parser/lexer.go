@@ -1,25 +1,27 @@
-package query
+package parser
 
 import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/trazo-lat/query/token"
 )
 
 // lexer tokenizes a query string into a sequence of tokens.
 type lexer struct {
 	input         string
-	pos           int // current read position
-	start         int // start of current token
-	tokens        []Token
+	pos           int
+	start         int
+	tokens        []token.Token
 	errors        ErrorList
-	afterOperator bool // true after emitting a comparison operator
+	afterOperator bool
 }
 
-// lex tokenizes the input query string and returns the token stream.
-func lex(input string, maxLength int) ([]Token, error) {
+// Lex tokenizes the input query string and returns the token stream.
+func Lex(input string, maxLength int) ([]token.Token, error) {
 	if maxLength > 0 && len(input) > maxLength {
-		return nil, ErrorList{newError(ErrQueryTooLong, Position{},
+		return nil, ErrorList{newError(ErrQueryTooLong, token.Position{},
 			"query length %d exceeds maximum of %d characters", len(input), maxLength)}
 	}
 
@@ -49,59 +51,59 @@ func (l *lexer) run() {
 		ch := l.input[l.pos]
 		switch {
 		case ch == '(':
-			l.emit(TokenLParen, "(")
+			l.emit(token.LParen, "(")
 			l.pos++
 		case ch == ')':
-			l.emit(TokenRParen, ")")
+			l.emit(token.RParen, ")")
 			l.pos++
 		case ch == '@':
-			l.emit(TokenAt, "@")
+			l.emit(token.At, "@")
 			l.pos++
 		case ch == '!' && l.peek(1) == '=':
-			l.emit(TokenNeq, "!=")
+			l.emit(token.Neq, "!=")
 			l.pos += 2
 			l.afterOperator = true
 		case ch == '>' && l.peek(1) == '=':
-			l.emit(TokenGte, ">=")
+			l.emit(token.Gte, ">=")
 			l.pos += 2
 			l.afterOperator = true
 		case ch == '<' && l.peek(1) == '=':
-			l.emit(TokenLte, "<=")
+			l.emit(token.Lte, "<=")
 			l.pos += 2
 			l.afterOperator = true
 		case ch == '=':
-			l.emit(TokenEq, "=")
+			l.emit(token.Eq, "=")
 			l.pos++
 			l.afterOperator = true
 		case ch == '>':
-			l.emit(TokenGt, ">")
+			l.emit(token.Gt, ">")
 			l.pos++
 			l.afterOperator = true
 		case ch == '<':
-			l.emit(TokenLt, "<")
+			l.emit(token.Lt, "<")
 			l.pos++
 			l.afterOperator = true
 		case ch == ':':
-			l.emit(TokenColon, ":")
+			l.emit(token.Colon, ":")
 			l.pos++
 			l.afterOperator = true
 		case ch == '.' && l.peek(1) == '.':
-			l.emit(TokenRange, "..")
+			l.emit(token.Range, "..")
 			l.pos += 2
 			l.afterOperator = true
 		case ch == '.':
-			l.emit(TokenDot, ".")
+			l.emit(token.Dot, ".")
 			l.pos++
 		case isIdentStart(ch):
 			l.lexIdentOrKeyword()
 		default:
-			l.errors.add(newError(ErrSyntax, Position{Offset: l.pos, Length: 1},
+			l.errors.add(newError(ErrSyntax, token.Position{Offset: l.pos, Length: 1},
 				"unexpected character %q", string(ch)))
 			l.pos++
 		}
 	}
 
-	l.tokens = append(l.tokens, Token{Type: TokenEOF, Pos: Position{Offset: l.pos}})
+	l.tokens = append(l.tokens, token.Token{Type: token.EOF, Pos: token.Position{Offset: l.pos}})
 }
 
 func (l *lexer) lexIdentOrKeyword() {
@@ -110,22 +112,20 @@ func (l *lexer) lexIdentOrKeyword() {
 		l.pos++
 	}
 	word := l.input[start:l.pos]
-	pos := Position{Offset: start, Length: l.pos - start}
+	pos := token.Position{Offset: start, Length: l.pos - start}
 
 	switch word {
 	case "AND":
-		l.tokens = append(l.tokens, Token{Type: TokenAnd, Value: word, Pos: pos})
+		l.tokens = append(l.tokens, token.Token{Type: token.And, Value: word, Pos: pos})
 	case "OR":
-		l.tokens = append(l.tokens, Token{Type: TokenOr, Value: word, Pos: pos})
+		l.tokens = append(l.tokens, token.Token{Type: token.Or, Value: word, Pos: pos})
 	case "NOT":
-		l.tokens = append(l.tokens, Token{Type: TokenNot, Value: word, Pos: pos})
+		l.tokens = append(l.tokens, token.Token{Type: token.Not, Value: word, Pos: pos})
 	default:
-		l.tokens = append(l.tokens, Token{Type: TokenIdent, Value: word, Pos: pos})
+		l.tokens = append(l.tokens, token.Token{Type: token.Ident, Value: word, Pos: pos})
 	}
 }
 
-// lexValue reads a value token after an operator. Values end at whitespace, ')' or EOF.
-// Values can contain wildcards (*), escape sequences (\*, \\, \(, \)), dates, durations, etc.
 func (l *lexer) lexValue() {
 	l.afterOperator = false
 	l.skipWhitespace()
@@ -142,7 +142,6 @@ func (l *lexer) lexValue() {
 		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == ')' {
 			break
 		}
-		// Stop at '..' (range separator) so parser can handle range expressions
 		if ch == '.' && l.peek(1) == '.' {
 			break
 		}
@@ -164,7 +163,7 @@ func (l *lexer) lexValue() {
 
 	raw := l.input[start:l.pos]
 	value := buf.String()
-	pos := Position{Offset: start, Length: l.pos - start}
+	pos := token.Position{Offset: start, Length: l.pos - start}
 
 	if len(value) == 0 {
 		return
@@ -174,45 +173,33 @@ func (l *lexer) lexValue() {
 	l.tokens = append(l.tokens, tok)
 }
 
-// classifyValue determines the token type for a lexed value.
-func (l *lexer) classifyValue(raw, value string, hasWildcard bool, pos Position) Token {
-	// Wildcard values
+func (l *lexer) classifyValue(raw, value string, hasWildcard bool, pos token.Position) token.Token {
 	if hasWildcard {
 		if !isValidWildcard(value) {
 			l.errors.add(newError(ErrInvalidWildcard, pos,
 				"invalid wildcard pattern %q: only prefix (foo*), suffix (*foo), and contains (*foo*) patterns are allowed", raw))
 		}
-		return Token{Type: TokenWildcard, Value: value, Pos: pos}
+		return token.Token{Type: token.Wildcard, Value: value, Pos: pos}
 	}
-
-	// Boolean
 	if value == "true" || value == "false" {
-		return Token{Type: TokenBoolean, Value: value, Pos: pos}
+		return token.Token{Type: token.Boolean, Value: value, Pos: pos}
 	}
-
-	// Date: YYYY-MM-DD
 	if isDateLiteral(value) {
 		if _, err := time.Parse("2006-01-02", value); err != nil {
 			l.errors.add(newError(ErrInvalidDate, pos, "invalid date %q", value))
 		}
-		return Token{Type: TokenDate, Value: value, Pos: pos}
+		return token.Token{Type: token.Date, Value: value, Pos: pos}
 	}
-
-	// Duration: digits followed by d/h/m/w
 	if isDurationLiteral(value) {
-		return Token{Type: TokenDuration, Value: value, Pos: pos}
+		return token.Token{Type: token.Duration, Value: value, Pos: pos}
 	}
-
-	// Number: try integer then float
 	if isIntegerLiteral(value) {
-		return Token{Type: TokenInteger, Value: value, Pos: pos}
+		return token.Token{Type: token.Integer, Value: value, Pos: pos}
 	}
 	if isFloatLiteral(value) {
-		return Token{Type: TokenFloat, Value: value, Pos: pos}
+		return token.Token{Type: token.Float, Value: value, Pos: pos}
 	}
-
-	// Default: string
-	return Token{Type: TokenString, Value: value, Pos: pos}
+	return token.Token{Type: token.String, Value: value, Pos: pos}
 }
 
 func (l *lexer) skipWhitespace() {
@@ -225,11 +212,11 @@ func (l *lexer) skipWhitespace() {
 	}
 }
 
-func (l *lexer) emit(typ TokenType, value string) {
-	l.tokens = append(l.tokens, Token{
+func (l *lexer) emit(typ token.Type, value string) {
+	l.tokens = append(l.tokens, token.Token{
 		Type:  typ,
 		Value: value,
-		Pos:   Position{Offset: l.start, Length: len(value)},
+		Pos:   token.Position{Offset: l.start, Length: len(value)},
 	})
 }
 
@@ -249,31 +236,22 @@ func isIdentChar(ch byte) bool {
 	return isIdentStart(ch) || (ch >= '0' && ch <= '9') || ch == '-'
 }
 
-// isValidWildcard checks that a wildcard pattern is only prefix, suffix, or contains.
-// Allowed: "foo*", "*foo", "*foo*". Not allowed: "a*b", "a*b*c".
 func isValidWildcard(s string) bool {
 	idx := strings.Index(s, "*")
 	if idx == -1 {
 		return true
 	}
-
-	// Count non-consecutive wildcard positions
-	// Allowed forms: *, *text, text*, *text*
 	stripped := strings.ReplaceAll(s, "*", "")
 	stars := len(s) - len(stripped)
-
 	if stars == 1 {
-		// * at start, end, or the entire string
 		return s[0] == '*' || s[len(s)-1] == '*'
 	}
 	if stars == 2 {
-		// *text* pattern
 		return s[0] == '*' && s[len(s)-1] == '*'
 	}
 	return false
 }
 
-// isDateLiteral checks if a string matches the YYYY-MM-DD pattern.
 func isDateLiteral(s string) bool {
 	if len(s) != 10 {
 		return false
@@ -293,7 +271,6 @@ func isDateLiteral(s string) bool {
 	return true
 }
 
-// isDurationLiteral checks if a string is a duration like 1d, 4h, 30m, 2w.
 func isDurationLiteral(s string) bool {
 	if len(s) < 2 {
 		return false
@@ -356,22 +333,20 @@ func isFloatLiteral(s string) bool {
 	return hasDot
 }
 
-// parseDuration parses a duration literal like "1d", "4h", "30m", "2w"
-// into a time.Duration. Go's time.ParseDuration does not support 'd' or 'w'.
-func parseDuration(s string) (time.Duration, error) {
+// ParseDuration parses a duration literal like "1d", "4h", "30m", "2w".
+// Go's time.ParseDuration does not support 'd' or 'w'.
+func ParseDuration(s string) (time.Duration, error) {
 	if len(s) < 2 {
-		return 0, newError(ErrInvalidDuration, Position{}, "invalid duration %q", s)
+		return 0, newError(ErrInvalidDuration, token.Position{}, "invalid duration %q", s)
 	}
-
 	numStr := s[:len(s)-1]
 	n := 0
 	for _, r := range numStr {
 		if r < '0' || r > '9' {
-			return 0, newError(ErrInvalidDuration, Position{}, "invalid duration %q", s)
+			return 0, newError(ErrInvalidDuration, token.Position{}, "invalid duration %q", s)
 		}
 		n = n*10 + int(r-'0')
 	}
-
 	switch s[len(s)-1] {
 	case 'm':
 		return time.Duration(n) * time.Minute, nil
@@ -382,6 +357,6 @@ func parseDuration(s string) (time.Duration, error) {
 	case 'w':
 		return time.Duration(n) * 7 * 24 * time.Hour, nil
 	default:
-		return 0, newError(ErrInvalidDuration, Position{}, "invalid duration suffix in %q", s)
+		return 0, newError(ErrInvalidDuration, token.Position{}, "invalid duration suffix in %q", s)
 	}
 }
