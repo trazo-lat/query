@@ -7,6 +7,8 @@ type options struct {
 	maxDepth      int
 	allowedOps    []validate.Op
 	allowedFields []string
+	funcs         FuncRegistry
+	noBuiltins    bool
 }
 
 func defaultOpts() options {
@@ -39,4 +41,23 @@ func WithAllowedOps(ops ...validate.Op) Option {
 // If empty, all fields from the config are allowed.
 func WithAllowedFields(fields ...string) Option {
 	return func(o *options) { o.allowedFields = fields }
+}
+
+// WithFunctions registers custom functions available in query expressions.
+// These are merged with the built-in functions (lower, upper, now, etc.).
+func WithFunctions(funcs ...Func) Option {
+	return func(o *options) {
+		if o.funcs == nil {
+			o.funcs = make(FuncRegistry)
+		}
+		for _, f := range funcs {
+			o.funcs.Register(f)
+		}
+	}
+}
+
+// WithNoBuiltins disables the built-in functions (lower, upper, now, etc.).
+// Only explicitly registered functions via [WithFunctions] will be available.
+func WithNoBuiltins() Option {
+	return func(o *options) { o.noBuiltins = true }
 }

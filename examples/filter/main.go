@@ -91,6 +91,10 @@ func (v *filterVisitor) VisitSelector(e *ast.SelectorExpr) func(map[string]any) 
 	return ast.Visit[func(map[string]any) bool](v, e.Base)
 }
 
+func (v *filterVisitor) VisitFuncCall(e *ast.FuncCallExpr) func(map[string]any) bool {
+	return func(map[string]any) bool { return false }
+}
+
 func main() {
 	q := "state=draft AND name=John*"
 	expr, err := query.Parse(q)

@@ -11,11 +11,23 @@ import (
 // Compile parses, validates, and compiles a query into an executable [Program].
 //
 // The fields parameter defines the allowed field names, types, and operators.
-// Options can further restrict which fields and operators are permitted.
+// Options can further restrict which fields and operators are permitted,
+// register custom functions, and set depth limits.
 func Compile(q string, fields []validate.FieldConfig, opts ...Option) (*Program, error) {
 	o := defaultOpts()
 	for _, opt := range opts {
 		opt(&o)
+	}
+
+	// Build function registry
+	funcs := make(FuncRegistry)
+	if !o.noBuiltins {
+		for k, v := range BuiltinFunctions() {
+			funcs[k] = v
+		}
+	}
+	for k, v := range o.funcs {
+		funcs[k] = v
 	}
 
 	// Restrict fields if specified
@@ -40,20 +52,21 @@ func Compile(q string, fields []validate.FieldConfig, opts ...Option) (*Program,
 		return nil, fmt.Errorf("query depth %d exceeds maximum of %d", ast.Depth(expr), o.maxDepth)
 	}
 
-	// Validate
+	// Validate (skip validation for function-call-only expressions)
 	v := validate.New(activeFields)
 	if err := v.Validate(expr); err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
 	}
 
 	// Compile the matcher
-	matcher := compileMatcher(expr)
+	m := compileMatcher(expr, funcs)
 
 	return &Program{
 		source:  q,
 		expr:    expr,
 		fields:  ast.Fields(expr),
-		matcher: matcher,
+		funcs:   funcs,
+		matcher: m,
 	}, nil
 }
 

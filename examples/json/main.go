@@ -85,6 +85,16 @@ func (v *jsonVisitor) VisitSelector(e *ast.SelectorExpr) *jsonNode {
 	return ast.Visit[*jsonNode](v, e.Base)
 }
 
+func (v *jsonVisitor) VisitFuncCall(e *ast.FuncCallExpr) *jsonNode {
+	args := make([]*jsonNode, 0, len(e.Args))
+	for _, arg := range e.Args {
+		if arg.Call != nil {
+			args = append(args, ast.Visit[*jsonNode](v, arg.Call))
+		}
+	}
+	return &jsonNode{Type: "func", Op: e.Name, Children: args}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "usage: %s <query>\n", os.Args[0])

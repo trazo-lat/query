@@ -57,5 +57,26 @@ func writeExpr(buf *strings.Builder, expr Expression) {
 			writeExpr(buf, e.Inner)
 			buf.WriteByte(')')
 		}
+	case *FuncCallExpr:
+		writeFuncCall(buf, e)
 	}
+}
+
+func writeFuncCall(buf *strings.Builder, fc *FuncCallExpr) {
+	buf.WriteString(fc.Name)
+	buf.WriteByte('(')
+	for i, arg := range fc.Args {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		switch {
+		case arg.Field != nil:
+			buf.WriteString(arg.Field.String())
+		case arg.Value != nil:
+			buf.WriteString(arg.Value.Raw)
+		case arg.Call != nil:
+			writeFuncCall(buf, arg.Call)
+		}
+	}
+	buf.WriteByte(')')
 }

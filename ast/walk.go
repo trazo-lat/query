@@ -19,6 +19,12 @@ func Walk(expr Expression, fn func(Expression) bool) {
 		if e.Inner != nil {
 			Walk(e.Inner, fn)
 		}
+	case *FuncCallExpr:
+		for _, arg := range e.Args {
+			if arg.Call != nil {
+				Walk(arg.Call, fn)
+			}
+		}
 	case *QualifierExpr, *PresenceExpr:
 		// leaf nodes
 	}

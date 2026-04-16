@@ -44,11 +44,12 @@ func (e *UnaryExpr) expr()               {}
 // QualifierExpr represents a field comparison: field op value.
 // For range expressions (field:start..end), EndValue is non-nil.
 type QualifierExpr struct {
-	Field    FieldPath  // e.g., ["labels", "dev"]
-	Operator token.Type // comparison operator
-	Value    Value      // primary value
-	EndValue *Value     // end value for range expressions
-	Position token.Position
+	Field     FieldPath     // e.g., ["labels", "dev"]
+	FieldFunc *FuncCallExpr // optional: function wrapping the field, e.g., lower(name)
+	Operator  token.Type    // comparison operator
+	Value     Value         // primary value
+	EndValue  *Value        // end value for range expressions
+	Position  token.Position
 }
 
 // Pos returns the position of the qualifier expression.
@@ -61,6 +62,9 @@ func (e *QualifierExpr) IsRange() bool { return e.EndValue != nil }
 
 // IsWildcard reports whether this qualifier uses a wildcard value.
 func (e *QualifierExpr) IsWildcard() bool { return e.Value.Wildcard }
+
+// HasFieldFunc reports whether this qualifier has a field transform function.
+func (e *QualifierExpr) HasFieldFunc() bool { return e.FieldFunc != nil }
 
 // PresenceExpr represents a field presence check: just the field name with no operator.
 type PresenceExpr struct {
@@ -96,3 +100,41 @@ type GroupExpr struct {
 func (e *GroupExpr) Pos() token.Position { return e.Position }
 func (e *GroupExpr) node()               {}
 func (e *GroupExpr) expr()               {}
+
+// FuncCallExpr represents a function call: lower(name), now(), len(description).
+//
+// Function calls can appear:
+//   - As field transforms: lower(name)=john* — wraps a field lookup
+//   - As value generators: created_at>=now() — produces a comparison value
+//   - As boolean predicates: contains(tags, "urgent") — standalone filter
+type FuncCallExpr struct {
+	Name     string    // function name
+	Args     []FuncArg // arguments
+	Position token.Position
+}
+
+// Pos returns the position of the function call.
+func (e *FuncCallExpr) Pos() token.Position { return e.Position }
+func (e *FuncCallExpr) node()               {}
+func (e *FuncCallExpr) expr()               {}
+
+// FuncArg is a function argument: a field reference, a literal value, or a nested call.
+type FuncArg struct {
+	Field *FieldPath    // field reference: name, labels.dev
+	Value *Value        // literal: "urgent", 42, true
+	Call  *FuncCallExpr // nested function: year(now())
+}
+
+// String returns a debug representation of the argument.
+func (a FuncArg) String() string {
+	switch {
+	case a.Field != nil:
+		return a.Field.String()
+	case a.Value != nil:
+		return a.Value.Raw
+	case a.Call != nil:
+		return a.Call.Name + "(...)"
+	default:
+		return "<empty>"
+	}
+}

@@ -72,6 +72,10 @@ func (v *sqlVisitor) VisitSelector(e *ast.SelectorExpr) string {
 	return ast.Visit[string](v, e.Base)
 }
 
+func (v *sqlVisitor) VisitFuncCall(e *ast.FuncCallExpr) string {
+	return ""
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "usage: %s <query>\n", os.Args[0])

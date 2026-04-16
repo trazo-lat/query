@@ -110,6 +110,8 @@ func (v *Validator) validate(expr ast.Expression) {
 		if e.Inner != nil {
 			v.validate(e.Inner)
 		}
+	case *ast.FuncCallExpr:
+		v.validateFuncCallFields(e)
 	case *ast.QualifierExpr:
 		v.validateQualifier(e)
 	case *ast.PresenceExpr:
@@ -118,6 +120,13 @@ func (v *Validator) validate(expr ast.Expression) {
 }
 
 func (v *Validator) validateQualifier(q *ast.QualifierExpr) {
+	// If the qualifier has a field transform function (e.g., lower(name)=john),
+	// validate the field references inside the function args instead.
+	if q.HasFieldFunc() {
+		v.validateFuncCallFields(q.FieldFunc)
+		return
+	}
+
 	fieldName := q.Field.String()
 	cfg, ok := v.resolveField(fieldName)
 	if !ok {
@@ -138,6 +147,21 @@ func (v *Validator) validateQualifier(q *ast.QualifierExpr) {
 		if !typeCompatible(cfg.Type, *q.EndValue) {
 			v.addError(ErrTypeMismatch, q.Position,
 				"range end value type %s is not compatible with field %q (type %s)", q.EndValue.Type, fieldName, cfg.Type)
+		}
+	}
+}
+
+// validateFuncCallFields validates field references inside function arguments.
+func (v *Validator) validateFuncCallFields(fc *ast.FuncCallExpr) {
+	for _, arg := range fc.Args {
+		if arg.Field != nil {
+			fieldName := arg.Field.String()
+			if _, ok := v.resolveField(fieldName); !ok {
+				v.addError(ErrFieldNotFound, fc.Position, "unknown field %q in function %s()", fieldName, fc.Name)
+			}
+		}
+		if arg.Call != nil {
+			v.validateFuncCallFields(arg.Call)
 		}
 	}
 }

@@ -15,6 +15,7 @@ type Visitor[T any] interface {
 	VisitPresence(expr *PresenceExpr) T
 	VisitGroup(expr *GroupExpr) T
 	VisitSelector(expr *SelectorExpr) T
+	VisitFuncCall(expr *FuncCallExpr) T
 }
 
 // Visit dispatches an expression to the appropriate visitor method.
@@ -32,6 +33,8 @@ func Visit[T any](v Visitor[T], expr Expression) T {
 		return v.VisitGroup(e)
 	case *SelectorExpr:
 		return v.VisitSelector(e)
+	case *FuncCallExpr:
+		return v.VisitFuncCall(e)
 	default:
 		var zero T
 		return zero

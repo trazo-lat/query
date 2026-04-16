@@ -42,6 +42,7 @@ const (
 	RParen               // )
 	At                   // @
 	Dot                  // .
+	Comma                // ,
 	Wildcard             // * (within string values)
 )
 
@@ -70,6 +71,7 @@ var typeNames = [...]string{
 	RParen:   ")",
 	At:       "@",
 	Dot:      ".",
+	Comma:    ",",
 	Wildcard: "*",
 }
 

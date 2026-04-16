@@ -8,6 +8,7 @@ type Program struct {
 	source  string
 	expr    ast.Expression
 	fields  []ast.FieldPath
+	funcs   FuncRegistry
 	matcher matcher
 }
 

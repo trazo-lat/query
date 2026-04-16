@@ -56,6 +56,9 @@ func (l *lexer) run() {
 		case ch == ')':
 			l.emit(token.RParen, ")")
 			l.pos++
+		case ch == ',':
+			l.emit(token.Comma, ",")
+			l.pos++
 		case ch == '@':
 			l.emit(token.At, "@")
 			l.pos++

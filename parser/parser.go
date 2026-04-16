@@ -117,6 +117,11 @@ func (p *parser) parseQualifier() ast.Expression {
 		return nil
 	}
 
+	// Check if this is a function call: identifier followed by '('
+	if p.peekAt(1).Type == token.LParen {
+		return p.parseFuncCallOrQualifier()
+	}
+
 	startPos := p.peek().Pos
 	field := p.parseFieldName()
 	tok := p.peek()
@@ -237,11 +242,116 @@ func (p *parser) parseValue() *ast.Value {
 	}
 }
 
+// parseFuncCallOrQualifier handles `func(args)` which can be:
+//   - A standalone boolean function: contains(tags, "urgent")
+//   - A field transform with comparison: lower(name)=john*
+func (p *parser) parseFuncCallOrQualifier() ast.Expression {
+	fc := p.parseFuncCall()
+	if fc == nil {
+		return nil
+	}
+
+	// If followed by an operator, this is a field-transform qualifier:
+	// lower(name)=john* → qualifier where the "field" is the function result
+	tok := p.peek()
+	if tok.Type.IsOperator() {
+		p.advance()
+		val := p.parseValue()
+		if val == nil {
+			return nil
+		}
+		return &ast.QualifierExpr{
+			Field:     ast.FieldPath{fc.Name}, // use func name as field for round-trip
+			Operator:  tok.Type,
+			Value:     *val,
+			FieldFunc: fc,
+			Position:  fc.Position,
+		}
+	}
+
+	// Standalone function call (boolean predicate)
+	return fc
+}
+
+// parseFuncCall parses: identifier "(" [arg {"," arg}] ")"
+func (p *parser) parseFuncCall() *ast.FuncCallExpr {
+	nameTok := p.advance() // consume identifier
+	startPos := nameTok.Pos
+	p.advance() // consume '('
+
+	var args []ast.FuncArg
+	for p.peek().Type != token.RParen && p.peek().Type != token.EOF {
+		if len(args) > 0 {
+			if p.peek().Type != token.Comma {
+				p.errors.add(newError(ErrSyntax, p.peek().Pos,
+					"expected ',' or ')' in function call, got %s", p.peek()))
+				return nil
+			}
+			p.advance() // consume ','
+		}
+		arg := p.parseFuncArg()
+		if arg == nil {
+			return nil
+		}
+		args = append(args, *arg)
+	}
+
+	if p.peek().Type != token.RParen {
+		p.errors.add(newError(ErrSyntax, p.peek().Pos, "expected ')' after function arguments"))
+		return nil
+	}
+	p.advance() // consume ')'
+
+	return &ast.FuncCallExpr{
+		Name:     nameTok.Value,
+		Args:     args,
+		Position: startPos,
+	}
+}
+
+// parseFuncArg parses a single function argument: field, literal, or nested call.
+func (p *parser) parseFuncArg() *ast.FuncArg {
+	tok := p.peek()
+
+	// Nested function call: func(...)
+	if tok.Type == token.Ident && p.peekAt(1).Type == token.LParen {
+		call := p.parseFuncCall()
+		if call == nil {
+			return nil
+		}
+		return &ast.FuncArg{Call: call}
+	}
+
+	// Field reference: identifier or identifier.identifier
+	if tok.Type == token.Ident {
+		field := p.parseFieldName()
+		return &ast.FuncArg{Field: &field}
+	}
+
+	// Literal value (use the value lexing for after-operator tokens)
+	val := p.parseValue()
+	if val != nil {
+		return &ast.FuncArg{Value: val}
+	}
+
+	p.errors.add(newError(ErrUnexpectedToken, tok.Pos,
+		"expected function argument, got %s", tok))
+	return nil
+}
+
 func (p *parser) peek() token.Token {
 	if p.pos >= len(p.tokens) {
 		return token.Token{Type: token.EOF}
 	}
 	return p.tokens[p.pos]
+}
+
+func (p *parser) peekAt(offset int) token.Token {
+	idx := p.pos + offset
+	if idx >= len(p.tokens) {
+		return token.Token{Type: token.EOF}
+	}
+	return p.tokens[idx]
 }
 
 func (p *parser) advance() token.Token {
