@@ -29,6 +29,9 @@ go run ./examples/selector
 
 # Custom validation rules (per-tenant access, cross-field, value-range)
 go run ./examples/customvalidator
+
+# AST inspection and debugging
+go run ./examples/explain
 ```
 
 ## Examples
@@ -43,6 +46,7 @@ go run ./examples/customvalidator
 | [`restrictions/`](restrictions/) | `WithAllowedFields`, `WithAllowedOps`, `WithMaxDepth`, `WithMaxLength` |
 | [`selector/`](selector/) | `@first`, `@last`, `@(inner)` against map- and struct-backed list fields |
 | [`customvalidator/`](customvalidator/) | `AstValidator` hook: per-tenant field denylists, cross-field rules, value ranges |
+| [`explain/`](explain/) | AST inspection: tokens, tree rendering, field extraction, error formatting |
 
 ## Pattern: Implementing a Visitor
 

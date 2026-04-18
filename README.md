@@ -365,6 +365,70 @@ These are known limitations that we plan to address in future versions:
 
 **Choose expr-lang** when you need a general-purpose expression engine for business rules, computed fields, or template evaluation where the full power of arithmetic, arrays, and ternary operators matters.
 
+## CLI — `query explain`
+
+The `query explain` command parses a query expression and visualizes the AST for debugging:
+
+```bash
+go run ./cmd/query explain "status=active AND priority>3"
+```
+
+```
+AndExpr
+├── QualifierExpr (=)
+│   ├── Field: status
+│   └── Value: active (string)
+└── QualifierExpr (>)
+    ├── Field: priority
+    └── Value: 3 (integer)
+```
+
+Nested groups and NOT:
+
+```bash
+go run ./cmd/query explain "(state=draft OR state=issued) AND NOT cancelled"
+```
+
+```
+AndExpr
+├── GroupExpr
+│   └── OrExpr
+│       ├── QualifierExpr (=)
+│       │   ├── Field: state
+│       │   └── Value: draft (string)
+│       └── QualifierExpr (=)
+│           ├── Field: state
+│           └── Value: issued (string)
+└── NotExpr
+    └── PresenceExpr
+        └── Field: cancelled
+```
+
+JSON output for programmatic use:
+
+```bash
+go run ./cmd/query explain --json "status=active"
+```
+
+```json
+{
+  "type": "QualifierExpr",
+  "op": "=",
+  "field": "status",
+  "value": "active",
+  "value_type": "string"
+}
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit AST as JSON |
+| `--tokens` | Print lexer tokens instead of AST |
+| `--schema <path>` | Validate against a JSON schema file |
+| `--positions` | Include source position spans on each node |
+
 ## Examples
 
 See the [`examples/`](examples/) directory for runnable programs:
