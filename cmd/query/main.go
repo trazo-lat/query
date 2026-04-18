@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/trazo-lat/query/output"
 	"github.com/trazo-lat/query/parser"
 	"github.com/trazo-lat/query/validate"
 )
@@ -203,12 +204,15 @@ func runExplain(args []string, stdout, stderr *os.File) int {
 		}
 	}
 
+	// Build output options
+	var opts []output.Option
+	if *positions {
+		opts = append(opts, output.WithPositions())
+	}
+
 	// --json mode
 	if *jsonFlag {
-		node := astToJSON(expr, *positions)
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(node); err != nil {
+		if err := output.Format(stdout, expr, output.JSONOutput, opts...); err != nil {
 			fmt.Fprintf(stderr, "error: encoding JSON: %s\n", err)
 			return 1
 		}
@@ -216,8 +220,10 @@ func runExplain(args []string, stdout, stderr *os.File) int {
 	}
 
 	// Default: tree view
-	tree := renderTree(expr, *positions)
-	fmt.Fprint(stdout, tree)
+	if err := output.Format(stdout, expr, output.TreeOutput, opts...); err != nil {
+		fmt.Fprintf(stderr, "error: rendering tree: %s\n", err)
+		return 1
+	}
 	return 0
 }
 

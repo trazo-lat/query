@@ -1,8 +1,8 @@
 // Example: AST inspection and debugging.
 //
 // Demonstrates how to parse a query expression and inspect its AST
-// structure using the library's public API — the same approach used
-// by the `query explain` CLI command.
+// using the output package for tree and JSON rendering, plus the
+// library's AST utilities for field extraction and depth analysis.
 //
 // Run:
 //
@@ -11,11 +11,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/trazo-lat/query/ast"
+	"github.com/trazo-lat/query/output"
 	"github.com/trazo-lat/query/parser"
-	"github.com/trazo-lat/query/token"
 )
 
 func main() {
@@ -24,7 +25,6 @@ func main() {
 		"(state=draft OR state=issued) AND NOT cancelled",
 		"items@first",
 		"price:10..50",
-		"lower(name)=john*",
 	}
 
 	for _, q := range queries {
@@ -59,23 +59,41 @@ func main() {
 		fmt.Printf("  Simple:  %v\n", ast.IsSimple(expr))
 		fmt.Printf("  String:  %s\n", ast.String(expr))
 
-		// 4. Tree view
+		// 4. Tree view — using output.AsTree
 		fmt.Println("  Tree:")
-		printTree(expr, "    ", true)
+		tree, _ := output.AsTree(expr)
+		for _, line := range strings.Split(strings.TrimRight(string(tree), "\n"), "\n") {
+			fmt.Printf("    %s\n", line)
+		}
+
+		// 5. JSON view — using output.AsJSON
+		fmt.Println("  JSON:")
+		jsonData, _ := output.AsJSON(expr)
+		for _, line := range strings.Split(strings.TrimRight(string(jsonData), "\n"), "\n") {
+			fmt.Printf("    %s\n", line)
+		}
 
 		fmt.Println()
 	}
 
+	// Demonstrate custom formatter
+	fmt.Println("Custom formatter (node count)")
+	fmt.Println(strings.Repeat("─", 60))
+	for _, q := range queries {
+		expr, _ := parser.Parse(q, 0)
+		var count int
+		ast.Walk(expr, func(_ ast.Expression) bool {
+			count++
+			return true
+		})
+		fmt.Printf("  %-55s → %d nodes\n", q, count)
+	}
+	fmt.Println()
+
 	// Demonstrate error formatting with source pointers
 	fmt.Println("Error formatting")
 	fmt.Println(strings.Repeat("─", 60))
-
-	badQueries := []string{
-		"AND foo",
-		"status=",
-		"$invalid",
-	}
-
+	badQueries := []string{"AND foo", "status=", "$invalid"}
 	for _, q := range badQueries {
 		_, err := parser.Parse(q, 0)
 		if err == nil {
@@ -91,62 +109,13 @@ func main() {
 			fmt.Printf("    %s^\n", strings.Repeat(" ", offset))
 		}
 	}
-}
 
-func printTree(expr ast.Expression, prefix string, isLast bool) {
-	connector := "├── "
-	childPrefix := prefix + "│   "
-	if isLast {
-		connector = "└── "
-		childPrefix = prefix + "    "
-	}
-
-	switch e := expr.(type) {
-	case *ast.BinaryExpr:
-		op := "AND"
-		if e.Op == token.Or {
-			op = "OR"
-		}
-		fmt.Printf("%s%s%sExpr\n", prefix, connector, op)
-		printTree(e.Left, childPrefix, false)
-		printTree(e.Right, childPrefix, true)
-
-	case *ast.UnaryExpr:
-		fmt.Printf("%s%sNOT\n", prefix, connector)
-		printTree(e.Expr, childPrefix, true)
-
-	case *ast.QualifierExpr:
-		fmt.Printf("%s%s%s %s %s\n", prefix, connector,
-			e.Field, token.OperatorSymbol(e.Operator), e.Value.Raw)
-		if e.IsRange() {
-			fmt.Printf("%s└── range end: %s\n", childPrefix, e.EndValue.Raw)
-		}
-
-	case *ast.PresenceExpr:
-		fmt.Printf("%s%s%s (presence)\n", prefix, connector, e.Field)
-
-	case *ast.SelectorExpr:
-		if e.Selector != "" {
-			fmt.Printf("%s%s@%s\n", prefix, connector, e.Selector)
-		} else {
-			fmt.Printf("%s%s@(...)\n", prefix, connector)
-		}
-		printTree(e.Base, childPrefix, e.Inner == nil)
-		if e.Inner != nil {
-			printTree(e.Inner, childPrefix, true)
-		}
-
-	case *ast.GroupExpr:
-		fmt.Printf("%s%s(...)\n", prefix, connector)
-		printTree(e.Expr, childPrefix, true)
-
-	case *ast.FuncCallExpr:
-		args := make([]string, len(e.Args))
-		for i, a := range e.Args {
-			args[i] = a.String()
-		}
-		fmt.Printf("%s%s%s(%s)\n", prefix, connector, e.Name, strings.Join(args, ", "))
-	}
+	// Demonstrate output.Format writing to a writer
+	fmt.Println()
+	fmt.Println("output.Format → os.Stdout")
+	fmt.Println(strings.Repeat("─", 60))
+	expr, _ := parser.Parse("status=active AND priority>3", 0)
+	_ = output.Format(os.Stdout, expr, output.TreeOutput)
 }
 
 func fieldNames(fps []ast.FieldPath) []string {

@@ -163,18 +163,18 @@ func TestExplain_JSON(t *testing.T) {
 	}
 	out := readTemp(t, stdout)
 
-	var node jsonNode
+	var node map[string]any
 	if err := json.Unmarshal([]byte(out), &node); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, out)
 	}
-	if node.Type != "QualifierExpr" {
-		t.Errorf("expected QualifierExpr, got %s", node.Type)
+	if node["type"] != "QualifierExpr" {
+		t.Errorf("expected QualifierExpr, got %v", node["type"])
 	}
-	if node.Field != "status" {
-		t.Errorf("expected field 'status', got %s", node.Field)
+	if node["field"] != "status" {
+		t.Errorf("expected field 'status', got %v", node["field"])
 	}
-	if node.Value != "active" {
-		t.Errorf("expected value 'active', got %s", node.Value)
+	if node["value"] != "active" {
+		t.Errorf("expected value 'active', got %v", node["value"])
 	}
 }
 
@@ -186,11 +186,11 @@ func TestExplain_JSONPositions(t *testing.T) {
 	}
 	out := readTemp(t, stdout)
 
-	var node jsonNode
+	var node map[string]any
 	if err := json.Unmarshal([]byte(out), &node); err != nil {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, out)
 	}
-	if node.Position == nil {
+	if node["position"] == nil {
 		t.Fatal("expected position to be set with --positions flag")
 	}
 }
@@ -343,18 +343,19 @@ func TestExplain_JSONBinaryExpr(t *testing.T) {
 	}
 	out := readTemp(t, stdout)
 
-	var node jsonNode
+	var node map[string]any
 	if err := json.Unmarshal([]byte(out), &node); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if node.Type != "BinaryExpr" {
-		t.Errorf("expected BinaryExpr, got %s", node.Type)
+	if node["type"] != "BinaryExpr" {
+		t.Errorf("expected BinaryExpr, got %v", node["type"])
 	}
-	if node.Op != "AND" {
-		t.Errorf("expected AND, got %s", node.Op)
+	if node["op"] != "AND" {
+		t.Errorf("expected AND, got %v", node["op"])
 	}
-	if len(node.Children) != 2 {
-		t.Errorf("expected 2 children, got %d", len(node.Children))
+	children, ok := node["children"].([]any)
+	if !ok || len(children) != 2 {
+		t.Errorf("expected 2 children, got %v", node["children"])
 	}
 }
 
