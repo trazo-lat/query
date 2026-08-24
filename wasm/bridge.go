@@ -28,7 +28,7 @@ func jsParse(_ js.Value, args []js.Value) any {
 
 	expr, err := parser.Parse(q, maxLen)
 	if err != nil {
-		return jsResult(nil, err.Error())
+		return jsParseResult(err)
 	}
 
 	node := astToJSON(expr)
@@ -96,7 +96,7 @@ func jsParseAndValidate(_ js.Value, args []js.Value) any {
 
 	expr, err := parser.Parse(q, 256)
 	if err != nil {
-		return jsResult(nil, err.Error())
+		return jsParseResult(err)
 	}
 
 	var fields []validate.FieldConfig
@@ -182,6 +182,31 @@ func jsResult(result any, errMsg string) any {
 	if result != nil {
 		obj["result"] = result
 	}
+	return toJSValue(obj)
+}
+
+// jsParseResult creates a {result, error, errors} JS object for a parse
+// failure. `error` stays the joined English message; `errors` carries each
+// failure as {code, kind, message, offset, length}, which is what a client
+// needs to render its own wording and underline the offending span. A failure
+// that is not a parse error still reports its message, with no `errors`.
+func jsParseResult(err error) any {
+	obj := map[string]any{"error": err.Error()}
+	parsed := parser.Errors(err)
+	if len(parsed) == 0 {
+		return toJSValue(obj)
+	}
+	list := make([]map[string]any, len(parsed))
+	for i, e := range parsed {
+		list[i] = map[string]any{
+			"code":    string(e.Code),
+			"kind":    e.Kind.String(),
+			"message": e.Message,
+			"offset":  e.Position.Offset,
+			"length":  e.Position.Length,
+		}
+	}
+	obj["errors"] = list
 	return toJSValue(obj)
 }
 
