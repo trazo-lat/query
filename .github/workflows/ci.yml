@@ -216,7 +216,20 @@ jobs:
       # Cross-compile one libquery.so per ABI with the runner's NDK.
       - name: Build per-ABI libquery.so
         run: |
-          export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          # An unset ANDROID_HOME makes the glob below expand to nothing, and
+          # the build then reports a missing compiler at a path starting with
+          # "/toolchains" — which reads like a broken Makefile rather than a
+          # runner without an SDK. Say which it is.
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "::error::ANDROID_HOME is not set on this runner; the Android job needs the SDK."
+            exit 1
+          fi
+          ndk="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$ndk" ]; then
+            echo "::error::No NDK under $ANDROID_HOME/ndk — install one on the runner image."
+            exit 1
+          fi
+          export ANDROID_NDK_HOME="$ndk"
           echo "using NDK: $ANDROID_NDK_HOME"
           make -C clients/ffi android
 

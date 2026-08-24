@@ -8,9 +8,19 @@ else
 	EXT := so
 endif
 
-# C compiler for cgo. Defaults to clang (the CI runner has clang but no gcc,
-# cgo's default). Override on the command line: make CC=gcc build.
-CC := clang
+# C compiler for cgo.
+#
+# Make always defines CC (its built-in default is `cc`), so a plain assignment
+# here would silently outrank a CC exported by the caller — which is how a CI
+# runner that lost clang kept failing after the workflow started choosing a
+# compiler for it. Only a value that came from the environment or the command
+# line counts as a real choice; otherwise take the first compiler that exists.
+ifeq ($(origin CC),default)
+CC := $(shell command -v clang 2>/dev/null || command -v gcc 2>/dev/null || command -v cc 2>/dev/null)
+endif
+ifeq ($(strip $(CC)),)
+$(error no C compiler found: cgo needs clang, gcc or cc on PATH)
+endif
 
 # --- Android cross-compilation (cgo via the NDK) ---
 # Needs the Android NDK (r27c/r28+; r28+ is 16KB page-aligned by default).
