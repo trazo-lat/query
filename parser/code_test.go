@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/heyllave/query/parser"
@@ -49,6 +50,73 @@ func TestParse_ErrorCode(t *testing.T) {
 				t.Errorf("Parse(%q) first code = %q, want %q (message: %s)",
 					tt.query, got, tt.want, errs[0].Message)
 			}
+		})
+	}
+}
+
+// TestCodes_EveryCodeIsProducible walks the whole vocabulary and proves each
+// code has an input that produces it.
+//
+// A code nothing can report is a promise the engine does not keep: a client
+// switching on it writes a branch that never runs, and a translator writes copy
+// nobody reads. Adding a constant without an input here fails the build.
+func TestCodes_EveryCodeIsProducible(t *testing.T) {
+	// One input per code. Duration is reported by ParseDuration rather than
+	// Parse, which is why the table names the entry point too.
+	byCode := map[parser.Code]struct {
+		input    string
+		duration bool
+	}{
+		parser.CodeQueryTooLong:     {input: strings.Repeat("a", 300) + "=1"},
+		parser.CodeUnexpectedChar:   {input: "state=draft #"},
+		parser.CodeUnclosedString:   {input: `state="draft`},
+		parser.CodeUnclosedParen:    {input: "(a=1 AND b=2"},
+		parser.CodeUnclosedIn:       {input: "state IN (draft, sent"},
+		parser.CodeEmptyInList:      {input: "state IN ()"},
+		parser.CodeUnclosedFieldRef: {input: "total>[unclosed"},
+		parser.CodeEmptyFieldRef:    {input: "total>[]"},
+		parser.CodeExpectedField:    {input: "=draft"},
+		parser.CodeExpectedValue:    {input: "state="},
+		parser.CodeExpectedInList:   {input: "state IN draft"},
+		parser.CodeExpectedSelector: {input: "items@nope(x=1)"},
+		parser.CodeExpectedRange:    {input: "total:1"},
+		parser.CodeUnexpected:       {input: "a=1)"},
+		parser.CodeInvalidWildcard:  {input: "state=**b**"},
+		parser.CodeInvalidDate:      {input: "created=2026-13-45"},
+		parser.CodeInvalidInteger:   {input: "n>99999999999999999999999"},
+		parser.CodeInvalidFloat:     {input: "total>."},
+		parser.CodeUnclosedFuncArgs: {input: "upper("},
+		parser.CodeInvalidDuration:  {input: "5zz", duration: true},
+	}
+
+	for _, code := range parser.Codes() {
+		t.Run(string(code), func(t *testing.T) {
+			// Arrange
+			tc, known := byCode[code]
+			if !known {
+				t.Fatalf("code %q has no input in this table — add one, or drop the code", code)
+			}
+
+			// Act
+			var err error
+			if tc.duration {
+				_, err = parser.ParseDuration(tc.input)
+			} else {
+				_, err = parser.Parse(tc.input, 256)
+			}
+
+			// Assert
+			if err == nil {
+				t.Fatalf("Parse(%q) succeeded; it must report %q", tc.input, code)
+			}
+			var got []parser.Code
+			for _, e := range parser.Errors(err) {
+				got = append(got, e.Code)
+				if e.Code == code {
+					return
+				}
+			}
+			t.Errorf("input %q reported %v, want %q among them", tc.input, got, code)
 		})
 	}
 }

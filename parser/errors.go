@@ -73,8 +73,26 @@ const (
 	CodeInvalidInteger   Code = "invalidInteger"   // a malformed integer literal
 	CodeInvalidFloat     Code = "invalidFloat"     // a malformed float literal
 	CodeUnclosedFuncArgs Code = "unclosedFuncArgs" // a function's argument list never closes
-	CodeExpectedFuncArg  Code = "expectedFuncArg"  // a function argument was required here
 )
+
+// codes is every failure the parser can report, and the reason a client can
+// switch on the set exhaustively: a code that nothing produces is a promise
+// the engine does not keep, and one that exists without appearing here is
+// invisible to the test that walks them.
+var codes = [...]Code{
+	CodeQueryTooLong, CodeUnexpectedChar, CodeUnclosedString, CodeUnclosedParen,
+	CodeUnclosedIn, CodeEmptyInList, CodeUnclosedFieldRef, CodeEmptyFieldRef,
+	CodeExpectedField, CodeExpectedValue, CodeExpectedInList, CodeExpectedSelector,
+	CodeExpectedRange, CodeUnexpected, CodeInvalidWildcard, CodeInvalidDate,
+	CodeInvalidDuration, CodeInvalidInteger, CodeInvalidFloat, CodeUnclosedFuncArgs,
+}
+
+// Codes returns every failure code the parser can report.
+func Codes() []Code {
+	out := make([]Code, len(codes))
+	copy(out, codes[:])
+	return out
+}
 
 // Error is a structured parse error with position info.
 //

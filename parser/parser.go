@@ -683,7 +683,10 @@ func (p *parser) parseFuncArg() *ast.FuncArg {
 		return &ast.FuncArg{Value: val}
 	}
 
-	p.errors.add(newError(CodeExpectedFuncArg, ErrUnexpectedToken, tok.Pos,
+	// parseValue has already reported the missing value on every path that
+	// reaches here, so this is the defensive tail of the same failure and
+	// carries the same code rather than inventing a second name for it.
+	p.errors.add(newError(CodeExpectedValue, ErrUnexpectedToken, tok.Pos,
 		"expected function argument, got %s", tok))
 	return nil
 }
