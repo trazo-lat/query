@@ -13,7 +13,11 @@ export type ValueType =
   | "float"
   | "boolean"
   | "date"
-  | "duration";
+  | "duration"
+  | "function"
+  | "arithmetic"
+  | "list"
+  | "field";
 
 /** A typed value in a qualifier expression. */
 export interface Value {
@@ -63,13 +67,34 @@ export interface GroupExpr extends BaseNode {
   expr: Expression;
 }
 
-/** Union of all expression types. */
+/**
+ * Selector expression: a base collection narrowed by a selector.
+ *
+ * `selector` is "first", "last", "any", "all", "none", or "" for the bare
+ * `@(...)` form; `inner` carries the expression for the forms that take one.
+ */
+export interface SelectorExpr extends BaseNode {
+  type: "selector";
+  selector: string;
+  base?: Expression;
+  inner?: Expression;
+}
+
+/**
+ * Union of all expression types the bridge serializes.
+ *
+ * Two surface forms never reach it, because the parser lowers them: `IN (a, b)`
+ * becomes an OR chain of equality qualifiers, and a negated comparison like
+ * `!>` becomes `NOT (field > value)`. A client that wants to show either back
+ * as it was written has to recognise the lowered shape.
+ */
 export type Expression =
   | BinaryExpr
   | UnaryExpr
   | QualifierExpr
   | PresenceExpr
-  | GroupExpr;
+  | GroupExpr
+  | SelectorExpr;
 
 /** Field value types for validation. */
 export type FieldValueType =
@@ -102,10 +127,56 @@ export interface FieldConfig {
   Nested?: boolean;
 }
 
+/**
+ * A stable machine identifier for a parse failure, matching Go's parser.Code.
+ * Clients render their own wording from it; the identifier never changes once
+ * shipped, so a reworded message is not a breaking change.
+ */
+export type ParseErrorCode =
+  | "queryTooLong"
+  | "unexpectedChar"
+  | "unclosedString"
+  | "unclosedParen"
+  | "unclosedIn"
+  | "emptyInList"
+  | "unclosedFieldRef"
+  | "emptyFieldRef"
+  | "expectedField"
+  | "expectedValue"
+  | "expectedInList"
+  | "expectedSelector"
+  | "expectedRange"
+  | "unexpected"
+  | "invalidWildcard"
+  | "invalidDate"
+  | "invalidDuration"
+  | "invalidInteger"
+  | "invalidFloat"
+  | "unclosedFuncArgs"
+  | "expectedFuncArg";
+
+/**
+ * One parse failure, with the span that caused it.
+ *
+ * `offset` and `length` are byte positions into the query as written, which is
+ * what a caret or an underline needs; `message` is English and is there for
+ * logs, not for a user-facing surface that has its own copy.
+ */
+export interface ParseError {
+  code: ParseErrorCode;
+  kind: string;
+  message: string;
+  offset: number;
+  length: number;
+}
+
 /** Result from parse operations. */
 export interface ParseResult {
   result?: Expression;
+  /** The joined English message. Prefer `errors` for anything user-facing. */
   error?: string;
+  /** Each failure, coded and positioned. Absent when the failure is not a parse error. */
+  errors?: ParseError[];
 }
 
 /** Result from validate operations. */
@@ -146,6 +217,7 @@ export interface Visitor<T> {
   visitQualifier(expr: QualifierExpr): T;
   visitPresence(expr: PresenceExpr): T;
   visitGroup(expr: GroupExpr): T;
+  visitSelector(expr: SelectorExpr): T;
 }
 
 /** Dispatch an expression to the appropriate visitor method. */
@@ -161,6 +233,8 @@ export function visit<T>(visitor: Visitor<T>, expr: Expression): T {
       return visitor.visitPresence(expr);
     case "group":
       return visitor.visitGroup(expr);
+    case "selector":
+      return visitor.visitSelector(expr);
   }
 }
 
@@ -189,6 +263,12 @@ export function walk(
       break;
     case "group":
       walk(expr.expr, fn);
+      break;
+    case "selector":
+      // A selector narrows a base collection; both sides carry qualifiers, and
+      // skipping them hides every field inside `@any(...)` from `fields()`.
+      if (expr.base) walk(expr.base, fn);
+      if (expr.inner) walk(expr.inner, fn);
       break;
   }
 }

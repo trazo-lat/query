@@ -62,13 +62,27 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # cgo needs a C compiler and the runner's has moved before: the job used
+      # to hard-code clang, which vanished from the image and took the race
+      # detector, the FFI build and Android down with it. Pick whichever is
+      # actually installed, and say so plainly when none is.
+      - name: Pick a C compiler for cgo
+        run: |
+          for candidate in clang gcc cc; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+              echo "CC=$candidate" >> "$GITHUB_ENV"
+              echo "using $candidate ($(command -v "$candidate"))"
+              exit 0
+            fi
+          done
+          echo "::error::No C compiler on this runner. cgo needs one for the race detector and the FFI build — install clang or gcc on the image."
+          exit 1
+
       - name: Run tests
-        # The race detector requires cgo; the self-hosted runner defaults to
-        # CGO_ENABLED=0 and has no gcc (cgo's default), so enable cgo and point
-        # it at the clang that is installed.
+        # The race detector requires cgo, and the runner defaults to
+        # CGO_ENABLED=0 — CC comes from the step above.
         env:
           CGO_ENABLED: "1"
-          CC: clang
         run: |
           go test -race -count=1 \
             -coverprofile=coverage.out -covermode=atomic \
@@ -137,12 +151,27 @@ jobs:
         with:
           sdk: "3.5"
 
-      # Build the cgo c-shared library the Dart FFI backend loads. clang is used
-      # because the self-hosted runner has no gcc (cgo's default compiler).
+      # cgo needs a C compiler and the runner's has moved before: the job used
+      # to hard-code clang, which vanished from the image and took the race
+      # detector, the FFI build and Android down with it. Pick whichever is
+      # actually installed, and say so plainly when none is.
+      - name: Pick a C compiler for cgo
+        run: |
+          for candidate in clang gcc cc; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+              echo "CC=$candidate" >> "$GITHUB_ENV"
+              echo "using $candidate ($(command -v "$candidate"))"
+              exit 0
+            fi
+          done
+          echo "::error::No C compiler on this runner. cgo needs one for the race detector and the FFI build — install clang or gcc on the image."
+          exit 1
+
+      # Build the cgo c-shared library the Dart FFI backend loads; CC comes
+      # from the step above.
       - name: Build native libquery
         env:
           CGO_ENABLED: "1"
-          CC: clang
         run: make -C clients/ffi build
 
       # Build query.wasm + wasm_exec.js and stage them (with the corpus) into
@@ -187,7 +216,20 @@ jobs:
       # Cross-compile one libquery.so per ABI with the runner's NDK.
       - name: Build per-ABI libquery.so
         run: |
-          export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          # An unset ANDROID_HOME makes the glob below expand to nothing, and
+          # the build then reports a missing compiler at a path starting with
+          # "/toolchains" — which reads like a broken Makefile rather than a
+          # runner without an SDK. Say which it is.
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "::error::ANDROID_HOME is not set on this runner; the Android job needs the SDK."
+            exit 1
+          fi
+          ndk="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$ndk" ]; then
+            echo "::error::No NDK under $ANDROID_HOME/ndk — install one on the runner image."
+            exit 1
+          fi
+          export ANDROID_NDK_HOME="$ndk"
           echo "using NDK: $ANDROID_NDK_HOME"
           make -C clients/ffi android
 

@@ -30,7 +30,7 @@ func Parse(input string, maxLength int) (ast.Expression, error) {
 	}
 	if p.peek().Type != token.EOF {
 		tok := p.peek()
-		p.errors.add(newError(ErrUnexpectedToken, tok.Pos,
+		p.errors.add(newError(CodeUnexpected, ErrUnexpectedToken, tok.Pos,
 			"unexpected token %s, expected end of query", tok))
 	}
 	if err := p.errors.errOrNil(); err != nil {
@@ -62,11 +62,11 @@ func ParseValue(input string, maxLength int) (ast.Expression, error) {
 		return nil, err
 	}
 	if val == nil {
-		return nil, ErrorList{newError(ErrUnexpectedEOF, startPos, "expected a value expression")}
+		return nil, ErrorList{newError(CodeExpectedValue, ErrUnexpectedEOF, startPos, "expected a value expression")}
 	}
 	if p.peek().Type != token.EOF {
 		tok := p.peek()
-		p.errors.add(newError(ErrUnexpectedToken, tok.Pos,
+		p.errors.add(newError(CodeUnexpected, ErrUnexpectedToken, tok.Pos,
 			"unexpected token %s, expected end of value expression", tok))
 	}
 	if err := p.errors.errOrNil(); err != nil {
@@ -179,7 +179,7 @@ func (p *parser) parseSelector(base ast.Expression, pos token.Position) ast.Expr
 		p.advance() // consume '('
 		inner := p.parseExpression()
 		if p.peek().Type != token.RParen {
-			p.errors.add(newError(ErrSyntax, p.peek().Pos,
+			p.errors.add(newError(CodeUnclosedParen, ErrSyntax, p.peek().Pos,
 				"expected ')' to close @%s selector, got %s", name, p.peek()))
 			return nil
 		}
@@ -194,7 +194,7 @@ func (p *parser) parseSelector(base ast.Expression, pos token.Position) ast.Expr
 		p.advance()
 		inner := p.parseExpression()
 		if p.peek().Type != token.RParen {
-			p.errors.add(newError(ErrSyntax, p.peek().Pos,
+			p.errors.add(newError(CodeUnclosedParen, ErrSyntax, p.peek().Pos,
 				"expected ')' to close selector expression, got %s", p.peek()))
 			return nil
 		}
@@ -205,7 +205,7 @@ func (p *parser) parseSelector(base ast.Expression, pos token.Position) ast.Expr
 			Position: pos,
 		}
 	default:
-		p.errors.add(newError(ErrUnexpectedToken, next.Pos,
+		p.errors.add(newError(CodeExpectedSelector, ErrUnexpectedToken, next.Pos,
 			"expected 'first', 'last', 'any(...)', 'all(...)', 'none(...)', or '(' after '@', got %s", next))
 		return nil
 	}
@@ -230,7 +230,7 @@ func (p *parser) parseTerm() ast.Expression {
 		open := p.advance()
 		expr := p.parseExpression()
 		if p.peek().Type != token.RParen {
-			p.errors.add(newError(ErrSyntax, p.peek().Pos, "expected ')', got %s", p.peek()))
+			p.errors.add(newError(CodeUnclosedParen, ErrSyntax, p.peek().Pos, "expected ')', got %s", p.peek()))
 			return expr
 		}
 		p.advance()
@@ -246,9 +246,9 @@ func (p *parser) parseQualifier() ast.Expression {
 	if p.peek().Type != token.Ident {
 		tok := p.peek()
 		if tok.Type == token.EOF {
-			p.errors.add(newError(ErrUnexpectedEOF, tok.Pos, "unexpected end of query, expected field name"))
+			p.errors.add(newError(CodeExpectedField, ErrUnexpectedEOF, tok.Pos, "unexpected end of query, expected field name"))
 		} else {
-			p.errors.add(newError(ErrUnexpectedToken, tok.Pos, "expected field name, got %s", tok))
+			p.errors.add(newError(CodeExpectedField, ErrUnexpectedToken, tok.Pos, "expected field name, got %s", tok))
 		}
 		return nil
 	}
@@ -313,7 +313,7 @@ func (p *parser) parseQualifier() ast.Expression {
 // round-tripping normalizes to the expanded form.
 func (p *parser) parseInExpr(field ast.FieldPath, startPos token.Position) ast.Expression {
 	if p.peek().Type != token.LParen {
-		p.errors.add(newError(ErrSyntax, p.peek().Pos,
+		p.errors.add(newError(CodeExpectedInList, ErrSyntax, p.peek().Pos,
 			"expected '(' after IN, got %s", p.peek()))
 		return nil
 	}
@@ -323,7 +323,7 @@ func (p *parser) parseInExpr(field ast.FieldPath, startPos token.Position) ast.E
 	for p.peek().Type != token.RParen && p.peek().Type != token.EOF {
 		if len(values) > 0 {
 			if p.peek().Type != token.Comma {
-				p.errors.add(newError(ErrSyntax, p.peek().Pos,
+				p.errors.add(newError(CodeUnclosedIn, ErrSyntax, p.peek().Pos,
 					"expected ',' or ')' in IN list, got %s", p.peek()))
 				return nil
 			}
@@ -336,13 +336,13 @@ func (p *parser) parseInExpr(field ast.FieldPath, startPos token.Position) ast.E
 		values = append(values, *val)
 	}
 	if p.peek().Type != token.RParen {
-		p.errors.add(newError(ErrSyntax, p.peek().Pos, "expected ')' to close IN list"))
+		p.errors.add(newError(CodeUnclosedIn, ErrSyntax, p.peek().Pos, "expected ')' to close IN list"))
 		return nil
 	}
 	p.advance() // consume ')'
 
 	if len(values) == 0 {
-		p.errors.add(newError(ErrSyntax, startPos, "IN list cannot be empty"))
+		p.errors.add(newError(CodeEmptyInList, ErrSyntax, startPos, "IN list cannot be empty"))
 		return nil
 	}
 
@@ -374,7 +374,7 @@ func (p *parser) parseRangeExpr(field ast.FieldPath, startPos token.Position) as
 		return nil
 	}
 	if p.peek().Type != token.Range {
-		p.errors.add(newError(ErrSyntax, p.peek().Pos,
+		p.errors.add(newError(CodeExpectedRange, ErrSyntax, p.peek().Pos,
 			"expected '..' in range expression, got %s", p.peek()))
 		return nil
 	}
@@ -398,7 +398,7 @@ func (p *parser) parseFieldName() ast.FieldPath {
 	for p.peek().Type == token.Dot {
 		p.advance()
 		if p.peek().Type != token.Ident {
-			p.errors.add(newError(ErrSyntax, p.peek().Pos,
+			p.errors.add(newError(CodeExpectedField, ErrSyntax, p.peek().Pos,
 				"expected field name after '.', got %s", p.peek()))
 			break
 		}
@@ -466,7 +466,7 @@ func (p *parser) parseValuePrimary() *ast.Value {
 			return nil
 		}
 		if p.peek().Type != token.RParen {
-			p.errors.add(newError(ErrSyntax, p.peek().Pos,
+			p.errors.add(newError(CodeUnclosedParen, ErrSyntax, p.peek().Pos,
 				"expected ')' to close value expression, got %s", p.peek()))
 			return nil
 		}
@@ -513,7 +513,7 @@ func (p *parser) parseValuePrimary() *ast.Value {
 		p.advance()
 		n, err := strconv.ParseInt(tok.Value, 10, 64)
 		if err != nil {
-			p.errors.add(newError(ErrInvalidValue, tok.Pos, "invalid integer %q", tok.Value))
+			p.errors.add(newError(CodeInvalidInteger, ErrInvalidValue, tok.Pos, "invalid integer %q", tok.Value))
 			return nil
 		}
 		return &ast.Value{Type: ast.ValueInteger, Raw: tok.Value, Int: n}
@@ -521,7 +521,7 @@ func (p *parser) parseValuePrimary() *ast.Value {
 		p.advance()
 		f, err := strconv.ParseFloat(tok.Value, 64)
 		if err != nil {
-			p.errors.add(newError(ErrInvalidValue, tok.Pos, "invalid float %q", tok.Value))
+			p.errors.add(newError(CodeInvalidFloat, ErrInvalidValue, tok.Pos, "invalid float %q", tok.Value))
 			return nil
 		}
 		return &ast.Value{Type: ast.ValueFloat, Raw: tok.Value, Float: f}
@@ -532,7 +532,7 @@ func (p *parser) parseValuePrimary() *ast.Value {
 		p.advance()
 		d, err := time.Parse("2006-01-02", tok.Value)
 		if err != nil {
-			p.errors.add(newError(ErrInvalidDate, tok.Pos, "invalid date %q", tok.Value))
+			p.errors.add(newError(CodeInvalidDate, ErrInvalidDate, tok.Pos, "invalid date %q", tok.Value))
 			return nil
 		}
 		return &ast.Value{Type: ast.ValueDate, Raw: tok.Value, Date: d}
@@ -540,7 +540,7 @@ func (p *parser) parseValuePrimary() *ast.Value {
 		p.advance()
 		dur, err := ParseDuration(tok.Value)
 		if err != nil {
-			p.errors.add(newError(ErrInvalidDuration, tok.Pos, "invalid duration %q", tok.Value))
+			p.errors.add(newError(CodeInvalidDuration, ErrInvalidDuration, tok.Pos, "invalid duration %q", tok.Value))
 			return nil
 		}
 		return &ast.Value{Type: ast.ValueDuration, Raw: tok.Value, Duration: dur}
@@ -548,10 +548,10 @@ func (p *parser) parseValuePrimary() *ast.Value {
 		p.advance()
 		return &ast.Value{Type: ast.ValueString, Raw: tok.Value, Str: tok.Value, Wildcard: true}
 	case token.EOF:
-		p.errors.add(newError(ErrUnexpectedEOF, tok.Pos, "expected value, got end of query"))
+		p.errors.add(newError(CodeExpectedValue, ErrUnexpectedEOF, tok.Pos, "expected value, got end of query"))
 		return nil
 	default:
-		p.errors.add(newError(ErrUnexpectedToken, tok.Pos, "expected value, got %s", tok))
+		p.errors.add(newError(CodeExpectedValue, ErrUnexpectedToken, tok.Pos, "expected value, got %s", tok))
 		p.advance()
 		return nil
 	}
@@ -632,7 +632,7 @@ func (p *parser) parseFuncCall() *ast.FuncCallExpr {
 	for p.peek().Type != token.RParen && p.peek().Type != token.EOF {
 		if len(args) > 0 {
 			if p.peek().Type != token.Comma {
-				p.errors.add(newError(ErrSyntax, p.peek().Pos,
+				p.errors.add(newError(CodeUnclosedFuncArgs, ErrSyntax, p.peek().Pos,
 					"expected ',' or ')' in function call, got %s", p.peek()))
 				return nil
 			}
@@ -646,7 +646,7 @@ func (p *parser) parseFuncCall() *ast.FuncCallExpr {
 	}
 
 	if p.peek().Type != token.RParen {
-		p.errors.add(newError(ErrSyntax, p.peek().Pos, "expected ')' after function arguments"))
+		p.errors.add(newError(CodeUnclosedFuncArgs, ErrSyntax, p.peek().Pos, "expected ')' after function arguments"))
 		return nil
 	}
 	p.advance() // consume ')'
@@ -683,7 +683,10 @@ func (p *parser) parseFuncArg() *ast.FuncArg {
 		return &ast.FuncArg{Value: val}
 	}
 
-	p.errors.add(newError(ErrUnexpectedToken, tok.Pos,
+	// parseValue has already reported the missing value on every path that
+	// reaches here, so this is the defensive tail of the same failure and
+	// carries the same code rather than inventing a second name for it.
+	p.errors.add(newError(CodeExpectedValue, ErrUnexpectedToken, tok.Pos,
 		"expected function argument, got %s", tok))
 	return nil
 }

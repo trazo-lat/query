@@ -21,7 +21,7 @@ type lexer struct {
 // Lex tokenizes the input query string and returns the token stream.
 func Lex(input string, maxLength int) ([]token.Token, error) {
 	if maxLength > 0 && len(input) > maxLength {
-		return nil, ErrorList{newError(ErrQueryTooLong, token.Position{},
+		return nil, ErrorList{newError(CodeQueryTooLong, ErrQueryTooLong, token.Position{},
 			"query length %d exceeds maximum of %d characters", len(input), maxLength)}
 	}
 
@@ -40,7 +40,7 @@ func Lex(input string, maxLength int) ([]token.Token, error) {
 // [ParseValue].
 func LexValue(input string, maxLength int) ([]token.Token, error) {
 	if maxLength > 0 && len(input) > maxLength {
-		return nil, ErrorList{newError(ErrQueryTooLong, token.Position{},
+		return nil, ErrorList{newError(CodeQueryTooLong, ErrQueryTooLong, token.Position{},
 			"query length %d exceeds maximum of %d characters", len(input), maxLength)}
 	}
 
@@ -139,7 +139,7 @@ func (l *lexer) run() {
 		case isDigit(ch):
 			l.lexNumericLiteral()
 		default:
-			l.errors.add(newError(ErrSyntax, token.Position{Offset: l.pos, Length: 1},
+			l.errors.add(newError(CodeUnexpectedChar, ErrSyntax, token.Position{Offset: l.pos, Length: 1},
 				"unexpected character %q", string(ch)))
 			l.pos++
 		}
@@ -269,7 +269,7 @@ func (l *lexer) lexQuotedString() {
 	value, terminated := l.readQuotedString()
 	pos := token.Position{Offset: start, Length: l.pos - start}
 	if !terminated {
-		l.errors.add(newError(ErrSyntax, pos, "unterminated string literal"))
+		l.errors.add(newError(CodeUnclosedString, ErrSyntax, pos, "unterminated string literal"))
 		return
 	}
 	// Quoted strings are always treated as String values, never reclassified
@@ -301,7 +301,7 @@ func (l *lexer) lexFieldRef() {
 		name, ok = l.readQuotedString()
 		quoted = true
 		if !ok {
-			l.errors.add(newError(ErrSyntax,
+			l.errors.add(newError(CodeUnclosedFieldRef, ErrSyntax,
 				token.Position{Offset: start, Length: l.pos - start},
 				"unterminated field reference"))
 			return
@@ -321,7 +321,7 @@ func (l *lexer) lexFieldRef() {
 
 	l.skipWhitespace()
 	if l.pos >= len(l.input) || l.input[l.pos] != ']' {
-		l.errors.add(newError(ErrSyntax,
+		l.errors.add(newError(CodeUnclosedFieldRef, ErrSyntax,
 			token.Position{Offset: start, Length: l.pos - start},
 			"unterminated field reference"))
 		return
@@ -329,7 +329,7 @@ func (l *lexer) lexFieldRef() {
 	l.pos++ // skip ']'
 
 	if name == "" {
-		l.errors.add(newError(ErrSyntax,
+		l.errors.add(newError(CodeEmptyFieldRef, ErrSyntax,
 			token.Position{Offset: start, Length: l.pos - start},
 			"empty field reference"))
 		return
@@ -586,7 +586,7 @@ func (l *lexer) lexFuncCallBody() {
 		case isIdentStart(ch):
 			l.lexIdentOrKeyword()
 		default:
-			l.errors.add(newError(ErrSyntax,
+			l.errors.add(newError(CodeUnexpectedChar, ErrSyntax,
 				token.Position{Offset: l.pos, Length: 1},
 				"unexpected character %q in function arguments", string(ch)))
 			l.pos++
@@ -704,7 +704,7 @@ func (l *lexer) lexArithPrimary() bool {
 		return true
 	}
 	if ch == ')' {
-		l.errors.add(newError(ErrSyntax, token.Position{Offset: l.pos, Length: 1},
+		l.errors.add(newError(CodeExpectedValue, ErrSyntax, token.Position{Offset: l.pos, Length: 1},
 			"expected value, got ')'"))
 		return false
 	}
@@ -734,7 +734,7 @@ func (l *lexer) lexArithPrimary() bool {
 		l.tokens = append(l.tokens, token.Token{Type: token.String, Value: word, Pos: pos})
 		return true
 	}
-	l.errors.add(newError(ErrSyntax, token.Position{Offset: l.pos, Length: 1},
+	l.errors.add(newError(CodeUnexpectedChar, ErrSyntax, token.Position{Offset: l.pos, Length: 1},
 		"unexpected character %q in value expression", string(ch)))
 	l.pos++
 	return false
@@ -743,7 +743,7 @@ func (l *lexer) lexArithPrimary() bool {
 func (l *lexer) classifyValue(raw, value string, hasWildcard bool, pos token.Position) token.Token {
 	if hasWildcard {
 		if !isValidWildcard(value) {
-			l.errors.add(newError(ErrInvalidWildcard, pos,
+			l.errors.add(newError(CodeInvalidWildcard, ErrInvalidWildcard, pos,
 				"invalid wildcard pattern %q: only prefix (foo*), suffix (*foo), and contains (*foo*) patterns are allowed", raw))
 		}
 		return token.Token{Type: token.Wildcard, Value: value, Pos: pos}
@@ -753,7 +753,7 @@ func (l *lexer) classifyValue(raw, value string, hasWildcard bool, pos token.Pos
 	}
 	if isDateLiteral(value) {
 		if _, err := time.Parse("2006-01-02", value); err != nil {
-			l.errors.add(newError(ErrInvalidDate, pos, "invalid date %q", value))
+			l.errors.add(newError(CodeInvalidDate, ErrInvalidDate, pos, "invalid date %q", value))
 		}
 		return token.Token{Type: token.Date, Value: value, Pos: pos}
 	}
@@ -908,13 +908,13 @@ func isFloatLiteral(s string) bool {
 // Go's time.ParseDuration does not support 'd' or 'w'.
 func ParseDuration(s string) (time.Duration, error) {
 	if len(s) < 2 {
-		return 0, newError(ErrInvalidDuration, token.Position{}, "invalid duration %q", s)
+		return 0, newError(CodeInvalidDuration, ErrInvalidDuration, token.Position{}, "invalid duration %q", s)
 	}
 	numStr := s[:len(s)-1]
 	n := 0
 	for _, r := range numStr {
 		if r < '0' || r > '9' {
-			return 0, newError(ErrInvalidDuration, token.Position{}, "invalid duration %q", s)
+			return 0, newError(CodeInvalidDuration, ErrInvalidDuration, token.Position{}, "invalid duration %q", s)
 		}
 		n = n*10 + int(r-'0')
 	}
@@ -928,6 +928,6 @@ func ParseDuration(s string) (time.Duration, error) {
 	case 'w':
 		return time.Duration(n) * 7 * 24 * time.Hour, nil
 	default:
-		return 0, newError(ErrInvalidDuration, token.Position{}, "invalid duration suffix in %q", s)
+		return 0, newError(CodeInvalidDuration, ErrInvalidDuration, token.Position{}, "invalid duration suffix in %q", s)
 	}
 }

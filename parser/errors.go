@@ -42,11 +42,64 @@ func (k ErrorKind) String() string {
 	return fmt.Sprintf("ErrorKind(%d)", k)
 }
 
+// Code is a stable machine identifier for a parse failure.
+//
+// Kind classifies a failure broadly and Message describes it in English. A
+// client that renders its own copy — a UI translating the failure, a linter
+// grouping by cause — needs neither: it needs an identifier that survives a
+// reworded message. Code is that identifier, and it never changes once shipped.
+type Code string
+
+// The parse failures the engine can report. One per distinguishable cause, so a
+// client can map each to its own wording and its own remedy.
+const (
+	CodeQueryTooLong     Code = "queryTooLong"     // the query exceeds the caller's maximum length
+	CodeUnexpectedChar   Code = "unexpectedChar"   // a character the grammar has no meaning for
+	CodeUnclosedString   Code = "unclosedString"   // a quoted literal never closes
+	CodeUnclosedParen    Code = "unclosedParen"    // a '(' never closes
+	CodeUnclosedIn       Code = "unclosedIn"       // an IN list never closes
+	CodeEmptyInList      Code = "emptyInList"      // IN () with nothing between the parens
+	CodeUnclosedFieldRef Code = "unclosedFieldRef" // a bracketed field reference never closes
+	CodeEmptyFieldRef    Code = "emptyFieldRef"    // a field reference with no name inside
+	CodeExpectedField    Code = "expectedField"    // a field name was required here
+	CodeExpectedValue    Code = "expectedValue"    // a value was required here
+	CodeExpectedInList   Code = "expectedInList"   // IN was not followed by a parenthesised list
+	CodeExpectedSelector Code = "expectedSelector" // '@' was not followed by a known selector
+	CodeExpectedRange    Code = "expectedRange"    // a range was required here
+	CodeUnexpected       Code = "unexpected"       // a token that cannot appear in this position
+	CodeInvalidWildcard  Code = "invalidWildcard"  // a '*' pattern the grammar cannot express
+	CodeInvalidDate      Code = "invalidDate"      // a malformed date literal
+	CodeInvalidDuration  Code = "invalidDuration"  // a malformed duration literal
+	CodeInvalidInteger   Code = "invalidInteger"   // a malformed integer literal
+	CodeInvalidFloat     Code = "invalidFloat"     // a malformed float literal
+	CodeUnclosedFuncArgs Code = "unclosedFuncArgs" // a function's argument list never closes
+)
+
+// codes is every failure the parser can report, and the reason a client can
+// switch on the set exhaustively: a code that nothing produces is a promise
+// the engine does not keep, and one that exists without appearing here is
+// invisible to the test that walks them.
+var codes = [...]Code{
+	CodeQueryTooLong, CodeUnexpectedChar, CodeUnclosedString, CodeUnclosedParen,
+	CodeUnclosedIn, CodeEmptyInList, CodeUnclosedFieldRef, CodeEmptyFieldRef,
+	CodeExpectedField, CodeExpectedValue, CodeExpectedInList, CodeExpectedSelector,
+	CodeExpectedRange, CodeUnexpected, CodeInvalidWildcard, CodeInvalidDate,
+	CodeInvalidDuration, CodeInvalidInteger, CodeInvalidFloat, CodeUnclosedFuncArgs,
+}
+
+// Codes returns every failure code the parser can report.
+func Codes() []Code {
+	out := make([]Code, len(codes))
+	copy(out, codes[:])
+	return out
+}
+
 // Error is a structured parse error with position info.
 //
 //nolint:revive // Error is the canonical name; package qualifier makes it clear (parser.Error)
 type Error struct {
 	Message  string
+	Code     Code
 	Position token.Position
 	Kind     ErrorKind
 }
@@ -114,9 +167,10 @@ func Errors(err error) []*Error {
 	return nil
 }
 
-func newError(kind ErrorKind, pos token.Position, format string, args ...any) *Error {
+func newError(code Code, kind ErrorKind, pos token.Position, format string, args ...any) *Error {
 	return &Error{
 		Message:  fmt.Sprintf(format, args...),
+		Code:     code,
 		Position: pos,
 		Kind:     kind,
 	}

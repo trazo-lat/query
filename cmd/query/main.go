@@ -21,6 +21,7 @@ import (
 
 	"github.com/heyllave/query/output"
 	"github.com/heyllave/query/parser"
+	"github.com/heyllave/query/token"
 	"github.com/heyllave/query/validate"
 )
 
@@ -235,17 +236,33 @@ func printErrors(query string, err error, stderr *os.File) {
 	}
 
 	for _, e := range errs {
-		fmt.Fprintf(stderr, "error: %s\n", e.Message)
+		// The code is what a client keys its own wording off, so printing it
+		// here is how someone writing one finds the identifier to switch on.
+		fmt.Fprintf(stderr, "error [%s]: %s\n", e.Code, e.Message)
 		fmt.Fprintf(stderr, "  %s\n", query)
-
-		// Build pointer line
-		offset := e.Position.Offset
-		if offset > len(query) {
-			offset = len(query)
-		}
-		pointer := strings.Repeat(" ", offset) + "^"
-		fmt.Fprintf(stderr, "  %s\n", pointer)
+		fmt.Fprintf(stderr, "  %s\n", caret(query, e.Position))
 	}
+}
+
+// caret builds the line that underlines the offending span: a '^' at the
+// failure's offset followed by '~' for the rest of its length, so a reader sees
+// WHICH token broke rather than only where the trouble starts.
+func caret(query string, pos token.Position) string {
+	offset := pos.Offset
+	if offset > len(query) {
+		offset = len(query)
+	}
+	length := pos.Length
+	if length < 1 {
+		length = 1
+	}
+	if offset+length > len(query) {
+		length = len(query) - offset
+	}
+	if length < 1 {
+		length = 1
+	}
+	return strings.Repeat(" ", offset) + "^" + strings.Repeat("~", length-1)
 }
 
 func printUsage(w *os.File) {

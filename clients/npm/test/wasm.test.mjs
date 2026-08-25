@@ -47,6 +47,67 @@ test("queryParse reports a parse error", () => {
   assert.ok(error, "expected a parse error");
 });
 
+// A client renders its own copy of a failure — a Spanish UI underlining the
+// token that broke — so the joined English sentence is not enough. These pin
+// the structured half of the contract.
+test("queryParse reports each failure with a code and a span", () => {
+  const { errors } = w.queryParse("items@nope(x=1)");
+  assert.ok(Array.isArray(errors), "expected a structured errors array");
+  assert.ok(errors.length > 0, "expected at least one structured error");
+
+  const [first] = errors;
+  assert.equal(first.code, "expectedSelector");
+  assert.equal(first.offset, 6, "offset must point at the offending token");
+  assert.equal(first.length, 4, "length must span it, so a caret can underline");
+  assert.equal(typeof first.kind, "string");
+  assert.ok(first.message.length > 0);
+});
+
+test("queryParse codes the common failures a person types", () => {
+  const cases = [
+    ["(state=draft", "unclosedParen"],
+    ["state=", "expectedValue"],
+    ["=draft", "expectedField"],
+    ["state IN ()", "emptyInList"],
+    ["state=**b**", "invalidWildcard"],
+    ['state="draft', "unclosedString"],
+  ];
+  for (const [query, code] of cases) {
+    const { errors } = w.queryParse(query);
+    assert.ok(errors?.length, `${query}: expected structured errors`);
+    assert.equal(errors[0].code, code, `${query}: wrong code`);
+  }
+});
+
+test("queryParse carries a zero-length span at end of input", () => {
+  // A failure at the end has nowhere to underline. Zero is the honest answer
+  // and must survive the wire rather than being dropped as falsy.
+  const { errors } = w.queryParse("state=");
+  assert.equal(errors[0].length, 0);
+  assert.ok(Object.hasOwn(errors[0], "length"), "length must be present, not omitted");
+});
+
+test("queryParse omits the structured array when it succeeds", () => {
+  const { result, errors, error } = w.queryParse("state=draft");
+  assert.ok(result, "expected an AST");
+  assert.equal(error, undefined);
+  assert.equal(errors, undefined, "a success carries no errors array");
+});
+
+test("queryParseAndValidate reports parse failures structurally too", () => {
+  const { errors } = w.queryParseAndValidate("(state=draft", JSON.stringify(fields));
+  assert.ok(errors?.length, "expected structured errors from the validate entry point");
+  assert.equal(errors[0].code, "unclosedParen");
+});
+
+test("a validation failure carries no parse errors array", () => {
+  // Only a PARSE failure is coded this way; a validation failure is a
+  // different envelope and must not pretend otherwise.
+  const { errors, error } = w.queryParseAndValidate("color=red", JSON.stringify(fields));
+  assert.ok(error, "expected a validation failure");
+  assert.equal(errors, undefined);
+});
+
 test("queryParseAndValidate accepts a valid query", () => {
   const { result, error } = w.queryParseAndValidate(
     "state=draft",

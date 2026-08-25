@@ -132,8 +132,8 @@ func TestExplain_LexerError(t *testing.T) {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	out := readTemp(t, stderr)
-	if !strings.Contains(out, "error:") {
-		t.Errorf("expected error output, got %q", out)
+	if !strings.Contains(out, "error [") {
+		t.Errorf("expected a coded error, got %q", out)
 	}
 	if !strings.Contains(out, "^") {
 		t.Errorf("expected source pointer (^), got %q", out)
@@ -147,8 +147,8 @@ func TestExplain_ParserError(t *testing.T) {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	out := readTemp(t, stderr)
-	if !strings.Contains(out, "error:") {
-		t.Errorf("expected error output, got %q", out)
+	if !strings.Contains(out, "error [") {
+		t.Errorf("expected a coded error, got %q", out)
 	}
 	if !strings.Contains(out, "^") {
 		t.Errorf("expected source pointer (^), got %q", out)
@@ -385,4 +385,50 @@ func readTemp(t *testing.T, f *os.File) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// TestRunExplain_ErrorShowsCodeAndSpan pins the two things a person writing a
+// client needs from the CLI: the stable identifier to switch on, and a pointer
+// that covers the whole offending token rather than only its first column.
+func TestRunExplain_ErrorShowsCodeAndSpan(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCode  string
+		wantPoint string
+	}{
+		{
+			name:      "multi-character token underlines its whole span",
+			query:     "items@nope(x=1)",
+			wantCode:  "[expectedSelector]",
+			wantPoint: "      ^~~~",
+		},
+		{
+			name:      "single-character token gets a bare caret",
+			query:     "[unclosed",
+			wantCode:  "[unexpectedChar]",
+			wantPoint: "  ^",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			stdout, stderr := tempFiles(t)
+
+			// Act
+			if code := run([]string{"explain", tt.query}, stdout, stderr); code != 1 {
+				t.Fatalf("run(explain %q) exit = %d, want 1", tt.query, code)
+			}
+			out := readTemp(t, stderr)
+
+			// Assert
+			if !strings.Contains(out, tt.wantCode) {
+				t.Errorf("stderr = %q, want it to contain the code %s", out, tt.wantCode)
+			}
+			if !strings.Contains(out, tt.wantPoint) {
+				t.Errorf("stderr = %q, want it to contain the pointer %q", out, tt.wantPoint)
+			}
+		})
+	}
 }
